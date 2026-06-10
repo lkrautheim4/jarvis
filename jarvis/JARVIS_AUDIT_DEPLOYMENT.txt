@@ -1,0 +1,198 @@
+JARVIS UNIFIED PREDICTION AUDIT SYSTEM
+Deployment & Operation Guide
+====================================
+
+GOAL:
+------
+You cannot tell if your 81% win rate is real or fiction without a central record that links:
+  PREDICTION → BET PLACED → OUTCOME GRADED → WIN/LOSS LOGGED
+
+This system creates that record.
+
+
+WHAT'S INCLUDED:
+-----------------
+1. jarvis_audit.py
+   - Reads kalshi_brain.json (all bets placed)
+   - Reads jarvis_memory.db (outcomes graded)
+   - Reads predictions_log.csv (manual + JARVIS predictions)
+   - Matches prediction → bet → outcome
+   - Generates audit_report.json, audit_summary.txt, mismatches.csv
+
+2. predictions_log.csv
+   - Template CSV for logging every prediction
+   - Columns: prediction_id, predictor, pred_type, prediction, confidence, timestamp, 
+             kalshi_bet_id, bet_amount, bet_direction, outcome_value, result, win_loss, notes
+   - MUST be populated as you place bets
+
+
+STEP 1: PREPARE THE VPS
+------------------------
+
+1a. Copy files to VPS:
+    scp jarvis_audit.py root@68.183.107.46:/root/jarvis/
+    scp predictions_log.csv root@68.183.107.46:/root/jarvis/
+
+1b. Make audit bot executable:
+    ssh root@68.183.107.46
+    chmod +x /root/jarvis/jarvis_audit.py
+
+
+STEP 2: UPDATE DATABASE SCHEMA
+-------------------------------
+jarvis_audit.py reads from kalshi_bets table in jarvis_memory.db.
+Make sure this table exists and has the right columns.
+
+REQUIRED COLUMNS for kalshi_bets table:
+  - id or bet_id (unique identifier)
+  - timestamp (when bet placed)
+  - market or label (what market - e.g., "BTC > 61000")
+  - direction (YES or NO)
+  - amount ($ bet)
+  - odds (decimal odds if applicable)
+  - outcome (actual outcome value)
+  - graded (boolean - was this outcome finalized?)
+  - result (WIN, LOSS, VOID)
+  - win_loss (1 for win, 0 for loss)
+  - graded_at (timestamp when outcome confirmed)
+
+If your table is missing columns, add them:
+  sqlite3 /root/jarvis/jarvis_memory.db
+  ALTER TABLE kalshi_bets ADD COLUMN result TEXT;
+  ALTER TABLE kalshi_bets ADD COLUMN win_loss INTEGER;
+  ALTER TABLE kalshi_bets ADD COLUMN graded_at TEXT;
+  .quit
+
+
+STEP 3: POPULATE predictions_log.csv
+------------------------------------
+THIS IS CRITICAL.
+
+For EVERY prediction (yours or JARVIS):
+  1. Assign a unique prediction_id (P001, P002, etc.)
+  2. Log: predictor (LENNY or JARVIS), prediction text, confidence %
+  3. When bet placed: log the kalshi_bet_id, amount, direction
+  4. When outcome known: log outcome_value, result, win_loss
+
+EXAMPLE WORKFLOW:
+
+  Tue 6:00 PM - You watch BTC, JARVIS says "BTC > 61k, 72% confidence"
+    → Add to predictions_log.csv:
+      P042,JARVIS,BTC direction,BTC > 61000 in 2hr,72%,2026-06-08T18:00:00-04:00,,,,"Prediction made, awaiting decision"
+
+  Tue 6:05 PM - You decide to bet NO ($10) because you disagree
+    → Update predictions_log.csv:
+      P042,JARVIS,BTC direction,BTC > 61000 in 2hr,72%,2026-06-08T18:00:00-04:00,K-2847,10,NO,,"Placed bet K-2847"
+
+  Tue 8:00 PM - BTC closes at 60,800 (below 61k), your NO bet wins
+    → Update predictions_log.csv:
+      P042,JARVIS,BTC direction,BTC > 61000 in 2hr,72%,2026-06-08T18:00:00-04:00,K-2847,10,NO,60800,WIN,1,"Bet won - BTC stayed below 61k"
+
+
+STEP 4: RUN THE AUDIT
+---------------------
+From VPS:
+  cd /root/jarvis
+  python3 jarvis_audit.py
+
+Output files:
+  - audit_report.json     (structured data for analysis)
+  - audit_summary.txt     (human-readable win rates + trail)
+  - audit_mismatches.csv  (any bets or predictions with problems)
+
+
+STEP 5: WIRE INTO MONITORING
+----------------------------
+Add audit job to tmux session (optional but recommended):
+
+  # In jarvis-dev tmux session:
+  new-window -n audit -c /root/jarvis
+  send-keys -t audit "watch -n 3600 'python3 jarvis_audit.py && tail -50 audit_summary.txt'" Enter
+
+  # This runs audit every 1 hour and shows you latest summary
+
+
+INTERPRETING RESULTS
+---------------------
+
+audit_summary.txt will show:
+
+  WIN RATE BY PREDICTOR:
+    JARVIS          |  12W   8L | 60.00% (20 total)
+    LENNY           |  15W   5L | 75.00% (20 total)
+
+If JARVIS is 60% and LENNY is 75%:
+  ✓ LENNY's edge is real (you beat JARVIS)
+  ✓ JARVIS 60% might be below your 81% claim (investigate why)
+  ✓ LENNY 75% is your baseline - use this to size options trades
+
+If JARVIS is 81% and LENNY is 40%:
+  ✓ JARVIS has proven edge - you should follow it more often
+  ✗ Your manual trades are diluting returns
+
+
+RULES FOR GOING FORWARD
+------------------------
+1. EVERY prediction logged before bet placed
+   → No retroactive logging. Audit only counts forward entries.
+
+2. EVERY Kalshi bet must link to a prediction_id
+   → If JARVIS says trade but you don't bet, still log prediction
+   → Tracks what signals you're ignoring
+
+3. EVERY outcome confirmed in DB before audit runs
+   → kalshi_grader.py must finalize (WIN/LOSS/VOID) in DB
+   → predictions_log.csv updated simultaneously
+
+4. Run audit weekly, compare to prior week
+   → "Last week JARVIS was 62%, this week 71%" tells you if things are improving
+
+5. If mismatch appears in audit_mismatches.csv, investigate immediately
+   → BET_NOT_FOUND = predicted something, never placed bet
+   → BET_NO_PREDICTION = placed bet with no prediction record
+
+
+NEXT: INTEGRATE WITH OPTIONS TRADING
+--------------------------------------
+Once you have 30+ graded predictions with verified win rates:
+
+  1. Confirm actual win rate is ≥70%
+  2. Size options using Kelly (e.g., if 75% WR, Kelly ≈ 2% of bankroll per trade)
+  3. Trade only tickers where JARVIS has 70%+ confidence
+  4. Stop if win rate drops below 60% over 10-trade rolling window
+
+
+TROUBLESHOOTING
+----------------
+
+"audit_report.json is empty"
+  → predictions_log.csv not found or not populated
+  → Check file exists and has header row + at least 1 data row
+
+"BET_NOT_FOUND errors"
+  → You logged a prediction with kalshi_bet_id but bet never placed in kalshi_brain.json
+  → Either manually add to kalshi_brain.json OR update predictions_log to remove kalshi_bet_id
+
+"All win_loss values are None"
+  → kalshi_bets table in DB missing win_loss column or values not populated
+  → kalshi_grader.py must run AFTER outcome is known
+  → Check kalshi_grader.py is logging results to DB
+
+"JARVIS still 81% - this is fake"
+  → You haven't populated predictions_log.csv with manual data yet
+  → Audit only works if BOTH JARVIS and your predictions are logged
+  → Start fresh: delete old audit files, re-populate CSV with last 50 trades
+
+
+MAINTENANCE
+-----------
+- Keep predictions_log.csv sorted by timestamp (oldest at top)
+- Archive to predictions_log_backup.csv quarterly
+- Run audit at same time each week (Mondays 9am EDT recommended)
+- Plot win rate over time to spot drift
+
+
+CONTACT
+-------
+If audit breaks, check stderr for specific errors.
+Most common: missing CSV headers, DB schema mismatch, malformed JSON in kalshi_brain.json

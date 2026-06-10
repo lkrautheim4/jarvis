@@ -1,0 +1,164 @@
+JARVIS AUDIT - QUICK REFERENCE (Keep this handy while trading)
+================================================================
+
+Your predictions_log.csv must stay current. Use this to know exactly when to update it.
+
+COLUMNS:
+  prediction_id,predictor,pred_type,prediction,confidence,timestamp,kalshi_bet_id,bet_amount,bet_direction,outcome_value,result,win_loss,notes
+
+
+MOMENT-BY-MOMENT WORKFLOW:
+
+1. JARVIS OR YOU MAKES A PREDICTION
+   ────────────────────────────────
+   What: JARVIS prints a signal or you think of a trade
+   When: Right when signal appears (before any bet decision)
+   Log:
+     P042,JARVIS,BTC direction,"BTC > 61000 in 2hr",72%,2026-06-08T18:30:00-04:00,,,,,,"Signal: JARVIS predicts BTC > 61k with 72% confidence"
+   
+   Columns to fill:
+     ✓ prediction_id (P001, P002, P003...)
+     ✓ predictor (JARVIS or LENNY or your name)
+     ✓ pred_type (BTC direction, SPY direction, earnings, congress, etc.)
+     ✓ prediction (exact text of the prediction)
+     ✓ confidence (JARVIS's confidence % if available)
+     ✓ timestamp (exact time prediction was made, EDT)
+     ✗ kalshi_bet_id (leave blank for now)
+     ✗ bet_amount, bet_direction (leave blank for now)
+     ✗ outcome_value, result, win_loss (leave blank for now)
+     ✓ notes (why you're logging this)
+
+
+2. YOU DECIDE TO PLACE (OR NOT PLACE) A BET
+   ────────────────────────────────────────
+   What: You clicked "place bet" on Kalshi and bet was accepted
+   When: Immediately after order fills
+   Log: UPDATE the existing row for that prediction_id:
+     P042,JARVIS,BTC direction,"BTC > 61000 in 2hr",72%,2026-06-08T18:30:00-04:00,K-2847,10,NO,,,,"Placed $10 NO bet on K-2847"
+   
+   Columns to update:
+     ✓ kalshi_bet_id (look in Kalshi UI or kalshi_brain.json)
+     ✓ bet_amount ($10, $25, etc.)
+     ✓ bet_direction (YES or NO)
+     ✗ outcome_value, result, win_loss (leave blank for now)
+     ✓ notes (record the actual bet details)
+   
+   IMPORTANT: If prediction was made but you DON'T bet, leave those columns blank.
+   The audit will show "BET_NOT_FOUND" and you'll know you skipped a signal.
+
+
+3. MARKET CLOSES / OUTCOME IS KNOWN
+   ─────────────────────────────────
+   What: Market expires, Kalshi shows WIN or LOSS
+   When: When you see outcome confirmed (or kalshi_grader.py marks it)
+   Log: UPDATE the existing row:
+     P042,JARVIS,BTC direction,"BTC > 61000 in 2hr",72%,2026-06-08T18:30:00-04:00,K-2847,10,NO,60800,LOSS,0,"Bet lost - BTC closed at 60800 (under 61k)"
+   
+   Columns to update:
+     ✓ outcome_value (60800, 549.50, etc. - the actual final value)
+     ✓ result (WIN or LOSS or VOID)
+     ✓ win_loss (1 if WIN, 0 if LOSS, leave blank if VOID)
+     ✓ notes (record the outcome and any notes)
+
+
+SPECIAL CASES:
+
+Case A: JARVIS prediction but you disagree and DON'T bet
+  → Still log the prediction (step 1)
+  → Leave bet_amount/kalshi_bet_id/bet_direction blank
+  → Audit will show "BET_NO_PREDICTION" — tells you that you ignored this signal
+  → Useful to track: are you right to ignore JARVIS sometimes?
+
+Case B: You manually predict something JARVIS doesn't
+  → Log as predictor=LENNY (or your name)
+  → Same workflow as above
+  → Audit will compare your win rate vs JARVIS
+  
+Case C: Prediction never placed as a bet (decided against it)
+  → Log prediction, then update with notes explaining why
+  → outcome_value/result/win_loss stay blank
+  → These don't count toward win rate (no actual bet = no grading)
+
+Case D: Bet placed but market is still open (outcome not known)
+  → Log prediction + bet
+  → Leave outcome_value/result/win_loss blank
+  → Run audit — it will show "PENDING_OUTCOME"
+  → Will be graded in next audit run when market closes
+
+
+EXAMPLE FULL AUDIT TRAIL:
+
+  Fri 2pm - JARVIS: "BTC > 60500, 71% confidence"
+    P050,JARVIS,BTC direction,"BTC > 60500 in 2hr",71%,2026-06-08T14:00:00-04:00,,,,,,"Signal made"
+
+  Fri 2:05pm - You agree, place $10 NO bet
+    P050,JARVIS,BTC direction,"BTC > 60500 in 2hr",71%,2026-06-08T14:00:00-04:00,K-2950,10,NO,,,,"Placed bet K-2950 matching prediction"
+
+  Fri 4:15pm - Market closes, BTC at 60200 (below 60500), your NO wins
+    P050,JARVIS,BTC direction,"BTC > 60500 in 2hr",71%,2026-06-08T14:00:00-04:00,K-2950,10,NO,60200,WIN,1,"Won - BTC stayed under 60500"
+
+  Audit will count this as: +1 WIN for JARVIS (71% confidence, correct prediction, bet placed, won)
+
+
+WHEN TO UPDATE CSV:
+
+Option 1: Live updates (best for audit accuracy)
+  - Update predictions_log.csv immediately each time
+  - Use a text editor or Python script
+  - Pros: Real-time accuracy
+  - Cons: More work
+
+Option 2: Daily batch update (good balance)
+  - Log all day's predictions in notes
+  - Update CSV once at end of trading day
+  - Pros: Less friction, still accurate
+  - Cons: Small window where data is stale
+
+Option 3: Weekly archive
+  - Maintain in a spreadsheet/notebook during week
+  - Populate CSV in bulk on Sundays
+  - Pros: Minimal interruption
+  - Cons: Risk of forgetting details
+
+
+COMMAND TO BACKUP BEFORE EDITING:
+  cp predictions_log.csv predictions_log_backup_$(date +%Y%m%d_%H%M%S).csv
+
+Then edit safely.
+
+
+RUN AUDIT WHEN:
+  - Weekly (Mondays 9am EDT recommended)
+  - After 20+ new predictions logged
+  - Before making large decisions (options trade, change strategy, etc.)
+
+Command:
+  cd /root/jarvis && python3 jarvis_audit.py
+
+Output:
+  audit_summary.txt → read this for win rates
+  audit_mismatches.csv → read this if something is broken
+  audit_report.json → raw data for analysis
+
+
+DEBUGGING IF SOMETHING IS BROKEN:
+
+"Audit found 0 predictions"
+  → predictions_log.csv not being read
+  → Check file path: /root/jarvis/predictions_log.csv
+  → Check header row is exactly: prediction_id,predictor,pred_type,...
+
+"kalshi_bets empty"
+  → kalshi_brain.json not being read
+  → Check file path: /root/jarvis/kalshi_brain.json
+  → Check format is valid JSON
+
+"All win_loss are None"
+  → Outcomes not in DB yet
+  → Check kalshi_grader.py is running
+  → Manually update predictions_log.csv with outcome values for now
+
+"Mismatches showing BET_NOT_FOUND"
+  → Prediction has kalshi_bet_id but bet not in kalshi_brain.json
+  → Check bet actually executed (look in Kalshi UI)
+  → If not executed, remove kalshi_bet_id from predictions_log.csv

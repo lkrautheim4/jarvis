@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS OS</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Bebas+Neue&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--accent:#C8FF00;--bg:#080808;--bg2:#0d0d0d;--bg3:#111;--border:#1e1e1e;--text:#ccc;--muted:#555;--dim:#333}
+  body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;min-height:100vh}
+  #header{background:var(--bg2);border-bottom:0.5px solid #1a1a1a;padding:10px 16px;display:flex;align-items:center;justify-content:space-between}
+  #header h1{color:var(--accent);font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:3px}
+  #header .status{font-size:10px;color:var(--dim);display:flex;gap:16px;align-items:center}
+  #tabs{display:flex;background:var(--bg2);border-bottom:0.5px solid #1a1a1a}
+  .tab{padding:8px 16px;font-size:11px;color:#444;cursor:pointer;border-bottom:2px solid transparent;letter-spacing:1px;transition:color 0.15s;font-family:'DM Mono',monospace}
+  .tab.active{color:var(--accent);border-bottom:2px solid var(--accent)}
+  .tab:hover{color:#888}
+  #content{padding:12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+  .card{background:var(--bg3);border:0.5px solid var(--border);border-radius:6px;padding:10px 12px}
+  .card-title{font-size:9px;color:#444;letter-spacing:1.5px;margin-bottom:6px;text-transform:uppercase}
+  .metric{font-size:22px;font-weight:500;color:var(--accent)}
+  .metric-sub{font-size:10px;color:var(--muted);margin-top:2px}
+  .row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:0.5px solid #181818}
+  .row:last-child{border-bottom:none}
+  .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+  .dot.alive{background:var(--accent);box-shadow:0 0 4px #C8FF0066}
+  .dot.dead{background:#ff4444}
+  .section-title{font-size:9px;color:var(--dim);letter-spacing:1.5px;margin:12px 0 8px;text-transform:uppercase}
+  .log-box{background:#080808;border:0.5px solid #1a1a1a;border-radius:4px;padding:8px;height:220px;overflow-y:auto;font-size:10px;line-height:1.7;font-family:monospace}
+  .log-info{color:var(--accent)}
+  .log-warn{color:#ffaa00}
+  .log-error{color:#ff4444}
+  .log-dim{color:var(--muted)}
+  .btn{font-size:10px;padding:5px 12px;border:0.5px solid var(--dim);background:transparent;color:#888;border-radius:4px;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:0.5px}
+  .btn:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.accent{border-color:var(--accent);color:var(--accent)}
+  .btn-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .pred-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:0.5px solid #181818;font-size:10px}
+  .pred-row:last-child{border-bottom:none}
+  .badge{background:#1a1a00;border:0.5px solid #C8FF0044;border-radius:4px;padding:2px 8px;font-size:11px;color:var(--accent);display:inline-block}
+  .brief-box{background:#0a0f06;border:0.5px solid #1e3a00;border-radius:6px;padding:12px;margin-bottom:12px}
+  .brief-label{font-size:9px;color:#3a5a00;letter-spacing:1.5px;margin-bottom:8px}
+  .brief-text{font-size:11px;color:#7a9a40;line-height:1.8}
+  .fp{font-size:9px;color:var(--muted);word-break:break-all;margin-bottom:3px}
+  table{width:100%;font-size:10px;border-collapse:collapse}
+  td{padding:4px 0;border-bottom:0.5px solid #181818}
+  td:last-child{text-align:right}
+  .hidden{display:none}
+  .tag-up{color:var(--accent)}
+  .tag-down{color:#ff4444}
+  .tag-neutral{color:#888}
+  input[type=text]{background:#111;border:0.5px solid var(--border);color:var(--text);padding:5px 10px;border-radius:4px;font-family:'DM Mono',monospace;font-size:11px;width:100%}
+  input[type=text]:focus{outline:none;border-color:var(--accent)}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>JARVIS OS</h1>
+  <div class="status">
+    <span id="live-indicator" style="color:#333">● CONNECTING</span>
+    <span id="last-update" style="color:#222">--:--:--</span>
+    <button class="btn" onclick="fetchAll()">↺</button>
+  </div>
+</div>
+
+<div id="tabs">
+  <div class="tab active" onclick="showTab('command')">COMMAND</div>
+  <div class="tab" onclick="showTab('bots')">BOTS</div>
+  <div class="tab" onclick="showTab('kalshi')">KALSHI</div>
+  <div class="tab" onclick="showTab('performance')">PERFORMANCE</div>
+  <div class="tab" onclick="showTab('settings')">SETTINGS</div>
+</div>
+
+<div id="content">
+
+  <!-- COMMAND TAB -->
+  <div id="tab-command">
+    <div class="grid" id="metrics-grid">
+      <div class="card"><div class="card-title">BTC Price</div><div class="metric" id="m-btc">--</div><div class="metric-sub" id="m-btc-sub">--</div></div>
+      <div class="card"><div class="card-title">Signal</div><div class="metric" id="m-signal">--</div><div class="metric-sub" id="m-signal-sub">--</div></div>
+      <div class="card"><div class="card-title">RSI</div><div class="metric" id="m-rsi">--</div><div class="metric-sub" id="m-rsi-sub">--</div></div>
+      <div class="card"><div class="card-title">Risk</div><div class="metric" id="m-risk">--</div><div class="metric-sub" id="m-risk-sub">--</div></div>
+      <div class="card"><div class="card-title">Kalshi P&L</div><div class="metric" id="m-pnl">--</div><div class="metric-sub" id="m-pnl-sub">--</div></div>
+      <div class="card"><div class="card-title">Bots Online</div><div class="metric" id="m-bots">--</div><div class="metric-sub" id="m-bots-sub">--</div></div>
+      <div class="card"><div class="card-title">Paper P&L</div><div class="metric" id="m-paper">--</div><div class="metric-sub" id="m-paper-sub">--</div></div>
+      <div class="card"><div class="card-title">Patterns</div><div class="metric" id="m-patterns">--</div><div class="metric-sub">fingerprints learned</div></div>
+    </div>
+    <div class="brief-box">
+      <div class="brief-label">JARVIS BRIEF</div>
+      <div class="brief-text" id="brief-text">Click to generate AI brief...</div>
+      <div class="btn-row">
+        <button class="btn accent" onclick="fetchBrief()">↗ Generate brief</button>
+        <button class="btn" onclick="fetchAll()">↺ Refresh all</button>
+        <button class="btn" onclick="sendTg()">↗ Send to Telegram</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTS TAB -->
+  <div id="tab-bots" class="hidden">
+    <div class="card" id="bots-list" style="margin-bottom:12px"></div>
+    <div class="section-title">Live log</div>
+    <div class="log-box" id="log-box"></div>
+    <div class="btn-row" id="log-btns"></div>
+  </div>
+
+  <!-- KALSHI TAB -->
+  <div id="tab-kalshi" class="hidden">
+    <div class="grid">
+      <div class="card"><div class="card-title">Win Rate</div><div class="metric" id="k-wr">--</div><div class="metric-sub" id="k-wr-sub">--</div></div>
+      <div class="card"><div class="card-title">P&L</div><div class="metric" id="k-pnl">--</div><div class="metric-sub" id="k-pnl-sub">--</div></div>
+      <div class="card"><div class="card-title">YES WR</div><div class="metric" id="k-yes">--</div><div class="metric-sub">on YES bets</div></div>
+      <div class="card"><div class="card-title">NO WR</div><div class="metric" id="k-no" style="color:#ff9944">--</div><div class="metric-sub">on NO bets</div></div>
+      <div class="card"><div class="card-title">Pred WR</div><div class="metric" id="k-pred">--</div><div class="metric-sub" id="k-pred-sub">--</div></div>
+      <div class="card"><div class="card-title">Open Bets</div><div class="metric" id="k-open" style="color:#ffaa00">--</div><div class="metric-sub">awaiting result</div></div>
+    </div>
+    <div class="section-title">Recent predictions</div>
+    <div class="card" id="preds-list"></div>
+    <div class="section-title">Pattern library</div>
+    <div class="card" id="patterns-list"></div>
+  </div>
+
+  <!-- PERFORMANCE TAB -->
+  <div id="tab-performance" class="hidden">
+    <div class="grid">
+      <div class="card"><div class="card-title">Total P&L</div><div class="metric" id="p-pnl">--</div></div>
+      <div class="card"><div class="card-title">Daily Loss</div><div class="metric" id="p-daily">--</div><div class="metric-sub">resets midnight</div></div>
+      <div class="card"><div class="card-title">Size Mult</div><div class="metric" id="p-size">--</div><div class="metric-sub">auto-adjusts</div></div>
+      <div class="card"><div class="card-title">Consec Losses</div><div class="metric" id="p-consec">--</div></div>
+    </div>
+    <div class="section-title">Sector performance</div>
+    <div class="card" id="sectors-list"></div>
+    <div class="section-title">Self-improvement log</div>
+    <div class="card" id="improve-list"></div>
+  </div>
+
+  <!-- SETTINGS TAB -->
+  <div id="tab-settings" class="hidden">
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">System Controls</div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn" onclick="pauseTrading()" style="border-color:#ff4444;color:#ff4444">⚠ Pause Trading</button>
+        <button class="btn accent" onclick="resumeTrading()">▶ Resume Trading</button>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">API Endpoint</div>
+      <input type="text" id="api-url" value="http://68.183.107.46:5005" style="margin-top:8px">
+      <div class="btn-row">
+        <button class="btn accent" onclick="updateApi()">Save</button>
+        <button class="btn" onclick="testApi()">Test connection</button>
+      </div>
+      <div id="api-status" style="font-size:10px;color:var(--muted);margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Send Telegram message</div>
+      <input type="text" id="tg-msg" placeholder="Message to Jarvis Trader bot..." style="margin-top:8px">
+      <div class="btn-row">
+        <button class="btn accent" onclick="sendTgCustom()">↗ Send</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let API_URL = 'http://68.183.107.46:5005';
+let statusData = null;
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const names = ['command','bots','kalshi','performance','settings'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  ['command','bots','kalshi','performance','settings'].forEach(t => {
+    document.getElementById('tab-' + t).classList.toggle('hidden', t !== name);
+  });
+  if (name === 'bots' && statusData) renderBots(statusData);
+}
+
+async function fetchAll() {
+  try {
+    const r = await fetch(API_URL + '/status');
+    statusData = await r.json();
+    renderCommand(statusData);
+    renderKalshi(statusData);
+    renderPerformance(statusData);
+    document.getElementById('live-indicator').style.color = '#3a5a00';
+    document.getElementById('live-indicator').textContent = '● LIVE';
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+  } catch(e) {
+    document.getElementById('live-indicator').style.color = '#ff4444';
+    document.getElementById('live-indicator').textContent = '● OFFLINE';
+  }
+}
+
+function renderCommand(d) {
+  const btc = d.btc || {}; const kalshi = d.kalshi || {};
+  const trading = d.trading || {}; const sys = d.system || {};
+
+  set('m-btc', '$' + (btc.price||0).toLocaleString());
+  set('m-btc-sub', (btc.chg24h >= 0 ? '+' : '') + (btc.chg24h||0).toFixed(2) + '% 24h');
+
+  const sc = btc.signal === 'bullish' ? '#C8FF00' : btc.signal === 'bearish' ? '#ff4444' : '#888';
+  setc('m-signal', (btc.signal||'neutral').toUpperCase(), sc);
+  set('m-signal-sub', '4H: ' + (btc.trend_4h||'?'));
+
+  const rc = (btc.rsi||50) < 35 ? '#ff9944' : (btc.rsi||50) > 65 ? '#ff4444' : '#C8FF00';
+  setc('m-rsi', btc.rsi||50, rc);
+  set('m-rsi-sub', 'F&G: ' + (btc.fear_greed||50) + '/100');
+
+  const riskc = btc.risk === 'EXTREME' ? '#ff4444' : btc.risk === 'HIGH' ? '#ffaa00' : '#C8FF00';
+  setc('m-risk', btc.risk||'NORMAL', riskc);
+  set('m-risk-sub', 'Funding: ' + (btc.funding||0).toFixed(4));
+
+  const pnl = kalshi.profit||0;
+  setc('m-pnl', '$' + (pnl >= 0 ? '+' : '') + pnl.toFixed(0), pnl >= 0 ? '#C8FF00' : '#ff4444');
+  set('m-pnl-sub', (kalshi.win_rate||0) + '% WR · ' + (kalshi.total_bets||0) + ' bets');
+
+  const bc = sys.uptime_ok ? '#C8FF00' : '#ff4444';
+  setc('m-bots', (sys.bots_alive||0) + '/' + (sys.bots_total||0), bc);
+  set('m-bots-sub', sys.uptime_ok ? 'All systems go' : 'Check bots tab');
+
+  const tpnl = trading.total_pnl||0;
+  setc('m-paper', '$' + (tpnl >= 0 ? '+' : '') + tpnl.toFixed(0), tpnl >= 0 ? '#C8FF00' : '#ff4444');
+  set('m-paper-sub', (trading.total_trades||0) + ' trades · ' + (trading.wins||0) + 'W ' + (trading.losses||0) + 'L');
+
+  set('m-patterns', d.patterns?.total||0);
+}
+
+function renderBots(d) {
+  const bots = d.bots || [];
+  const list = document.getElementById('bots-list');
+  list.innerHTML = bots.map(b => `
+    <div class="row" style="cursor:pointer" onclick="loadLog('${b.name}')">
+      <div class="dot ${b.alive ? 'alive' : 'dead'}"></div>
+      <div style="flex:1;font-size:11px;color:${b.alive ? '#aaa' : '#444'}">${b.name}</div>
+      <div style="font-size:9px;color:${b.alive ? '#3a5a00' : '#5a0000'}">${b.alive ? b.age_mins + 'm ago' : 'DOWN'}</div>
+    </div>`).join('');
+
+  const btns = document.getElementById('log-btns');
+  btns.innerHTML = bots.slice(0,6).map(b =>
+    `<button class="btn" onclick="loadLog('${b.name}')">${b.name.replace('jarvis_','')}</button>`
+  ).join('');
+
+  loadLog('jarvis_master');
+}
+
+async function loadLog(bot) {
+  const box = document.getElementById('log-box');
+  box.innerHTML = '<span style="color:#333">Loading...</span>';
+  try {
+    const r = await fetch(API_URL + '/logs/' + bot);
+    const d = await r.json();
+    box.innerHTML = (d.lines||[]).map(line => {
+      const cls = line.includes('[ERROR]') ? 'log-error' : line.includes('[WARNING]') ? 'log-warn' : line.includes('[INFO]') ? 'log-info' : 'log-dim';
+      return `<div class="${cls}">${line}</div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch { box.innerHTML = '<span style="color:#ff4444">Failed to load logs</span>'; }
+}
+
+function renderKalshi(d) {
+  const k = d.kalshi || {}; const preds = d.predictions || []; const pat = d.patterns || {};
+
+  setc('k-wr', (k.win_rate||0) + '%', k.win_rate >= 55 ? '#C8FF00' : k.win_rate >= 45 ? '#888' : '#ff4444');
+  set('k-wr-sub', (k.wins||0) + 'W / ' + (k.losses||0) + 'L');
+  const kpnl = k.profit||0;
+  setc('k-pnl', '$' + (kpnl >= 0 ? '+' : '') + kpnl.toFixed(0), kpnl >= 0 ? '#C8FF00' : '#ff4444');
+  set('k-pnl-sub', (k.total_bets||0) + ' total bets');
+  set('k-yes', (k.yes_wr||0) + '%');
+  set('k-no', (k.no_wr||0) + '%');
+  set('k-pred', (k.pred_wr||0) + '%');
+  set('k-pred-sub', (k.pred_total||0) + ' graded');
+  set('k-open', k.open_bets||0);
+
+  const pl = document.getElementById('preds-list');
+  if (!preds.length) { pl.innerHTML = '<div style="font-size:10px;color:#333">No predictions yet</div>'; }
+  else pl.innerHTML = preds.map(p => `
+    <div class="pred-row">
+      <span style="color:#555">${(p.ts||'').slice(11,16)}</span>
+      <span style="color:#aaa">$${(p.price||0).toLocaleString()}</span>
+      <span style="${p.direction === 'ABOVE' ? 'color:#C8FF00' : 'color:#ff9944'}">${p.direction||''}</span>
+      <span style="color:#555">${p.conf||''}</span>
+      <span style="${p.correct === true ? 'color:#C8FF00' : p.correct === false ? 'color:#ff4444' : 'color:#555'}">
+        ${p.correct === true ? '✓' : p.correct === false ? '✗' : p.result === 'VOID' ? 'void' : '…'}
+      </span>
+    </div>`).join('');
+
+  const ptl = document.getElementById('patterns-list');
+  if (!pat.top?.length) { ptl.innerHTML = '<div style="font-size:10px;color:#333">Building pattern library...</div>'; }
+  else ptl.innerHTML = pat.top.map(p => `
+    <div style="padding:6px 0;border-bottom:0.5px solid #181818">
+      <div class="fp">${p.fingerprint}</div>
+      <div style="font-size:10px;color:${p.wr >= 60 ? '#C8FF00' : p.wr <= 40 ? '#ff4444' : '#888'}">
+        WR: ${p.wr}% (${p.wins}/${p.total})
+      </div>
+    </div>`).join('');
+}
+
+function renderPerformance(d) {
+  const t = d.trading || {}; const sectors = d.sector_scores || {};
+  const improvements = d.improvement_log || [];
+
+  const tpnl = t.total_pnl||0;
+  setc('p-pnl', '$' + (tpnl >= 0 ? '+' : '') + tpnl.toFixed(0), tpnl >= 0 ? '#C8FF00' : '#ff4444');
+  setc('p-daily', '$' + (t.daily_loss||0).toFixed(0), (t.daily_loss||0) < -200 ? '#ff4444' : '#888');
+  set('p-size', (t.size_multiplier||1).toFixed(1) + 'x');
+  setc('p-consec', t.consec_losses||0, (t.consec_losses||0) >= 3 ? '#ff4444' : '#888');
+
+  const sl = document.getElementById('sectors-list');
+  const sEntries = Object.entries(sectors).sort((a,b) => b[1]-a[1]);
+  if (!sEntries.length) sl.innerHTML = '<div style="font-size:10px;color:#333">No sector data yet</div>';
+  else sl.innerHTML = '<table>' + sEntries.map(([s,v]) =>
+    `<tr><td style="color:#aaa">${s.toUpperCase()}</td><td style="color:${v >= 0 ? '#C8FF00' : '#ff4444'}">${v >= 0 ? '+' : ''}${(v||0).toFixed(2)}%</td></tr>`
+  ).join('') + '</table>';
+
+  const il = document.getElementById('improve-list');
+  if (!improvements.length) il.innerHTML = '<div style="font-size:10px;color:#333">No improvements logged yet</div>';
+  else il.innerHTML = improvements.map(i => `
+    <div style="padding:5px 0;border-bottom:0.5px solid #181818">
+      <div style="font-size:9px;color:#444">${i.ts||''}</div>
+      <div style="font-size:10px;color:#888">${i.change||''}</div>
+    </div>`).join('');
+}
+
+async function fetchBrief() {
+  document.getElementById('brief-text').textContent = 'Generating...';
+  try {
+    const r = await fetch(API_URL + '/brief');
+    const d = await r.json();
+    document.getElementById('brief-text').textContent = d.brief;
+  } catch { document.getElementById('brief-text').textContent = 'API unavailable'; }
+}
+
+async function pauseTrading() {
+  if (!confirm('Pause all trading?')) return;
+  await fetch(API_URL + '/pause', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  alert('Trading paused');
+}
+
+async function resumeTrading() {
+  await fetch(API_URL + '/resume', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  alert('Trading resumed');
+}
+
+function updateApi() {
+  API_URL = document.getElementById('api-url').value.trim();
+  document.getElementById('api-status').textContent = 'Saved. Testing...';
+  testApi();
+}
+
+async function testApi() {
+  try {
+    const r = await fetch(API_URL + '/ping');
+    const d = await r.json();
+    document.getElementById('api-status').textContent = '✓ Connected — ' + d.ts;
+    document.getElementById('api-status').style.color = '#C8FF00';
+  } catch {
+    document.getElementById('api-status').textContent = '✗ Cannot connect';
+    document.getElementById('api-status').style.color = '#ff4444';
+  }
+}
+
+async function sendTgCustom() {
+  const msg = document.getElementById('tg-msg').value.trim();
+  if (!msg) return;
+  await fetch(API_URL + '/telegram', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({msg})
+  });
+  document.getElementById('tg-msg').value = '';
+  alert('Sent to Telegram');
+}
+
+async function sendTg() {
+  const brief = document.getElementById('brief-text').textContent;
+  if (!brief || brief.includes('Click to')) { alert('Generate a brief first'); return; }
+  await fetch(API_URL + '/telegram', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({msg: '🤖 JARVIS DASHBOARD BRIEF\n' + brief})
+  });
+  alert('Sent to Telegram');
+}
+
+function set(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function setc(id, val, color) {
+  const el = document.getElementById(id);
+  if (el) { el.textContent = val; el.style.color = color; }
+}
+
+// Auto-refresh every 30 seconds
+fetchAll();
+setInterval(fetchAll, 30000);
+</script>
+</body>
+</html>

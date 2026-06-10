@@ -1,0 +1,106 @@
+### JARVIS API Test Suite — US-Compatible
+### REST Client extension required (Huachao Mao)
+### Click "Send Request" above any ### to test
+
+###############################################
+# KRAKEN — US-friendly, CORS-enabled, free
+###############################################
+
+### 1. BTC Current Price
+GET https://api.kraken.com/0/public/Ticker?pair=XBTUSD
+
+###
+
+### 2. ETH Current Price
+GET https://api.kraken.com/0/public/Ticker?pair=ETHUSD
+
+###
+
+### 3. BTC + ETH Together
+GET https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD
+
+###
+
+### 4. BTC 1h Candles (interval=60 means 60 minutes)
+GET https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60
+
+###
+
+### 5. ETH 1h Candles
+GET https://api.kraken.com/0/public/OHLC?pair=ETHUSD&interval=60
+
+###
+
+### 6. BTC Daily Candles (interval=1440 = 1 day)
+GET https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1440
+
+###
+
+### 7. ETH Daily Candles
+GET https://api.kraken.com/0/public/OHLC?pair=ETHUSD&interval=1440
+
+###
+
+### 8. BTC 4h Candles (interval=240)
+GET https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=240
+
+###
+
+### 9. Kraken Server Time (quick connectivity check)
+GET https://api.kraken.com/0/public/Time
+
+###############################################
+# ALTERNATIVE.ME — Fear & Greed (works fine)
+###############################################
+
+### 10. Fear & Greed Index
+GET https://api.alternative.me/fng/?limit=1
+
+###
+
+### 11. Fear & Greed — 7 day history
+GET https://api.alternative.me/fng/?limit=7
+
+###############################################
+# COINBASE — US-friendly backup price source
+###############################################
+
+### 12. BTC Price (Coinbase)
+GET https://api.coinbase.com/v2/prices/BTC-USD/spot
+
+###
+
+### 13. ETH Price (Coinbase)
+GET https://api.coinbase.com/v2/prices/ETH-USD/spot
+
+###############################################
+# KALSHI — Requires your API key
+###############################################
+
+### 14. Kalshi BTC markets (paste your key below)
+# GET https://trading-api.kalshi.com/trade-api/v2/markets?series_ticker=KXBTC&status=open
+# KALSHI-ACCESS-KEY: YOUR_KEY_HERE
+
+###############################################
+# BLOCKED IN US — DO NOT USE
+###############################################
+
+### Binance — 451 restricted location (Pennsylvania/US)
+# GET https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT
+
+### CoinGecko market_chart — CORS blocked without paid key
+# GET https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1
+
+###############################################
+# KRAKEN RESPONSE FORMAT NOTES
+###############################################
+# Ticker response: result.XXBTZUSD (BTC) or result.XETHZUSD (ETH)
+#   c[0] = last trade price
+#   h[1] = 24h high
+#   l[1] = 24h low
+#   v[1] = 24h volume
+#   P[1] = 24h % change (weighted avg vs open)
+#
+# OHLC response: result.XXBTZUSD = array of candles
+#   Each candle: [time, open, high, low, close, vwap, volume, count]
+#   time = unix timestamp
