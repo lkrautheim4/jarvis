@@ -1036,6 +1036,7 @@ def scan_and_alert(brain, ctx):
                 continue
 
             # (#2) IV Rank — don't BUY premium when implied vol is already rich.
+            iv_rank = None
             if opt_type in ("call_buy", "put_buy"):
                 iv_rank = get_iv_rank(ticker, iv)
                 if iv_rank is not None and iv_rank > MAX_IV_RANK:
