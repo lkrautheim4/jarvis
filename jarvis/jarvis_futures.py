@@ -209,17 +209,27 @@ def main():
                     
                     if should_exit:
                         sell(symbol)
+                        del open_trades[symbol]  # remove first — prevents re-close on exception
                         pnl_dollar = (pnl_pct / 100) * trade["size"] * LEVERAGE
                         won = pnl_pct > 0
                         trade.update({"pnl": round(pnl_dollar, 2), "won": won, "hold_mins": hold_mins, "close_reason": reason, "close_price": price})
-                        brain["trades"].append(trade)
-                        brain["total_trades"] += 1
-                        brain["wins"] += 1 if won else 0
-                        brain["losses"] += 0 if won else 1
-                        brain["total_pnl"] = round(brain["total_pnl"] + pnl_dollar, 2)
-                        learn_from_trade(brain, trade)
-                        save_brain(brain)
-                        del open_trades[symbol]
+                        # Idempotency guard: skip if same trade already recorded
+                        _dup = any(
+                            t.get("asset") == trade["asset"]
+                            and t.get("entry") == trade["entry"]
+                            and t.get("open_time") == trade["open_time"]
+                            for t in brain["trades"]
+                        )
+                        if _dup:
+                            log.warning(f"DEDUP: {symbol} entry={trade['entry']} open_time={trade['open_time']} already in brain — skipping append")
+                        else:
+                            brain["trades"].append(trade)
+                            brain["total_trades"] += 1
+                            brain["wins"] += 1 if won else 0
+                            brain["losses"] += 0 if won else 1
+                            brain["total_pnl"] = round(brain["total_pnl"] + pnl_dollar, 2)
+                            learn_from_trade(brain, trade)
+                            save_brain(brain)
                         emoji = "✅" if won else "❌"
                         tg(f"{emoji} {symbol} CLOSED\nReason: {reason}\nPnL: ${pnl_dollar:+.2f}\nTotal: ${brain['total_pnl']:+.2f}")
                         log.info(f"CLOSED {symbol} {reason} PnL=${pnl_dollar:+.2f}")
