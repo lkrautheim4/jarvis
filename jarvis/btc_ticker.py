@@ -6,8 +6,19 @@ MEMORY = "/root/jarvis/btc_memory.json"
 logging.basicConfig(filename=LOG, level=logging.INFO, format="%(asctime)s %(message)s")
 
 def fetch_btc():
-    r = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd", timeout=10)
-    return r.json()["bitcoin"]["usd"]
+    # CoinGecko free tier is heavily rate-limited; fall back to Coinbase on any failure
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+            timeout=10
+        )
+        data = r.json()
+        if "bitcoin" in data:
+            return data["bitcoin"]["usd"]
+    except Exception:
+        pass
+    r = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=10)
+    return float(r.json()["data"]["amount"])
 
 def calc_rsi(prices, period=14):
     if len(prices) < period + 1:
