@@ -205,7 +205,7 @@ def scan_news(data):
     # RSS feeds
     for source, url in NEWS_FEEDS.items():
         tree = fetch_rss(url)
-        if not tree: continue
+        if tree is None: continue
         items = tree.findall(".//item")
         for item in items[:15]:
             title_el = item.find("title")
