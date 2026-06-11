@@ -1194,13 +1194,26 @@ def scan_and_alert(brain, ctx):
                     "pnl": None
                 }
                 def _append(data):
+                    # Exact dedup inside the lock — prevents race where two concurrent
+                    # scan_and_alert calls both pass the pre-flight guard above.
+                    for _t in data.get("trades", []):
+                        if (
+                            _t.get("ticker") == setup["ticker"]
+                            and _t.get("strategy") == setup["strategy"]
+                            and float(_t.get("strike", 0)) == float(setup["strike"])
+                            and _t.get("entry_date") == _new["entry_date"]
+                            and _t.get("status") == "paper_open"
+                        ):
+                            return ("dedup", f"already open: {setup['ticker']} {setup['strategy']} ${setup['strike']}")
                     capped, reason = _store.would_exceed_cap(data, setup["ticker"], _cost, trade=_new)
                     if capped:
                         return ("capped", reason)
                     data["trades"].append(_new)
                     return ("logged", None)
                 _outcome, _reason = _store.update(_append)
-                if _outcome == "capped":
+                if _outcome == "dedup":
+                    log.info(f"DEDUP: skipped paper log for {setup['ticker']} {setup['strategy']} ${setup['strike']} — {_reason}")
+                elif _outcome == "capped":
                     log.info(f"CAP: skipped {setup['ticker']} ${setup['strike']} — {_reason}")
                     _cap_key = f"CAP_{setup['ticker']}_{today}"
                     if brain["signals_sent"].get(_cap_key) != today:

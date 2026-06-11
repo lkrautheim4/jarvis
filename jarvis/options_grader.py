@@ -52,7 +52,7 @@ def get_current_premium(ticker, strategy, strike, expiry):
     try:
         tk = yf.Ticker(ticker)
         opt = tk.option_chain(expiry)
-        chain = opt.puts if strategy == 'put_buy' else opt.calls
+        chain = opt.puts if 'put' in strategy else opt.calls
         row = chain[chain['strike'] == strike]
         if row.empty:
             # Find closest strike
@@ -82,6 +82,22 @@ def check_trade(trade):
     if not entry_premium or not expiry:
         return False, None, None, None, None
 
+    # Short positions (put_sell, call_sell) profit when the premium decays.
+    # P&L sign and gain_pct direction are flipped vs. long positions.
+    is_short = strategy in ('put_sell', 'call_sell')
+
+    def _calc_pnl(current):
+        if is_short:
+            return round((entry_premium - current) * 100, 2)
+        return round((current - entry_premium) * 100, 2)
+
+    def _gain_pct(current):
+        if entry_premium == 0:
+            return 0.0
+        if is_short:
+            return (entry_premium - current) / entry_premium
+        return (current - entry_premium) / entry_premium
+
     # Check DTE
     try:
         exp_date = datetime.strptime(expiry, '%Y-%m-%d').date()
@@ -92,7 +108,7 @@ def check_trade(trade):
     # Auto-close expired trades
     if dte < 0:
         current = get_current_premium(ticker, strategy, strike, expiry) or 0
-        pnl = round((current - entry_premium) * 100, 2)
+        pnl = _calc_pnl(current)
         result = 'WIN' if pnl > 0 else 'LOSS'
         return True, 'EXPIRED', current, pnl, result
 
@@ -101,7 +117,7 @@ def check_trade(trade):
         current = get_current_premium(ticker, strategy, strike, expiry)
         if current is None:
             return False, None, None, None, None
-        pnl = round((current - entry_premium) * 100, 2)
+        pnl = _calc_pnl(current)
         result = 'WIN' if pnl > 0 else 'LOSS'
         return True, f'DTE_EXIT ({dte}d remaining)', current, pnl, result
 
@@ -111,18 +127,19 @@ def check_trade(trade):
         log.info(f"Could not fetch premium for {ticker} {strategy} ${strike} {expiry}")
         return False, None, None, None, None
 
-    pnl = round((current - entry_premium) * 100, 2)
-    gain_pct = (current - entry_premium) / entry_premium
+    pnl = _calc_pnl(current)
+    gain_pct = _gain_pct(current)
 
-    # Take profit: +50%
+    # Take profit: +50% (from seller's perspective: premium decayed ≥50%)
     if gain_pct >= 0.50:
         return True, f'TAKE_PROFIT (+{round(gain_pct*100)}%)', current, pnl, 'WIN'
 
-    # Stop loss: -50%
+    # Stop loss: -50% (from seller's perspective: premium grew ≥50%)
     if gain_pct <= -0.50:
         return True, f'STOP_LOSS ({round(gain_pct*100)}%)', current, pnl, 'LOSS'
 
-    log.info(f"{ticker} ${strike} {strategy}: premium ${current} vs entry ${entry_premium} ({round(gain_pct*100):+}%) — holding")
+    direction = "short" if is_short else "long"
+    log.info(f"{ticker} ${strike} {strategy} ({direction}): premium ${current} vs entry ${entry_premium} ({round(gain_pct*100):+}%) — holding")
     return False, None, None, None, None
 
 def _trade_key(t):
@@ -230,12 +247,18 @@ def morning_report():
     for t in opens:
         entry = t.get('premium', 0) or 0
         total_cost += t.get('cost_per_contract', 0) or 0
-        cur = get_current_premium(t['ticker'], t.get('strategy', 'put_buy'), t['strike'], t['expiry'])
+        strat = t.get('strategy', 'put_buy')
+        is_short = strat in ('put_sell', 'call_sell')
+        cur = get_current_premium(t['ticker'], strat, t['strike'], t['expiry'])
         if cur is None:
             rows.append((t, None, None))
             continue
-        pct = ((cur - entry) / entry * 100) if entry else 0
-        total_pnl += (cur - entry) * 100
+        if entry:
+            pct = ((entry - cur) / entry * 100) if is_short else ((cur - entry) / entry * 100)
+        else:
+            pct = 0.0
+        pos_pnl = ((entry - cur) if is_short else (cur - entry)) * 100
+        total_pnl += pos_pnl
         rows.append((t, cur, pct))
         if pct >= 40:
             near.append(f"🟢 {t['ticker']} ${t['strike']} {pct:+.0f}% — near TAKE-PROFIT")
@@ -247,9 +270,11 @@ def morning_report():
         if cur is None:
             lines.append(f"{t['ticker']} ${t['strike']} {t['expiry']} — no quote")
         else:
-            pnl = (cur - (t.get('premium', 0) or 0)) * 100
+            entry = t.get('premium', 0) or 0
+            is_short = t.get('strategy', 'put_buy') in ('put_sell', 'call_sell')
+            pnl = ((entry - cur) if is_short else (cur - entry)) * 100
             lines.append(f"{t['ticker']} ${t['strike']} {t['expiry']}  "
-                         f"${t.get('premium',0):.2f}→${cur:.2f}  {pct:+.0f}%  ${pnl:+.0f}")
+                         f"${entry:.2f}→${cur:.2f}  {pct:+.0f}%  ${pnl:+.0f}")
     lines.append("=" * 26)
     lines.append(f"Open: {len(opens)} | Book cost: ${total_cost:,.0f}")
     lines.append(f"Open book P&L: ${total_pnl:+,.0f}")

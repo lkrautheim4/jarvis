@@ -3,7 +3,7 @@ jarvis_memory_db.py — Shared SQLite memory layer for all JARVIS bots
 Level 2 upgrade: single source of truth, all bots read/write here
 """
 import sqlite3, json, time, logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 DB_PATH = "/root/jarvis/jarvis_memory.db"
@@ -179,11 +179,21 @@ def brain_get_all() -> dict:
 # ── Kalshi bets ──────────────────────────────────────────────────────────────
 
 def log_kalshi_bet(symbol, strike, bet, prob, yes_price, no_price, reason, ev=None, kelly=None):
+    ts = datetime.now().isoformat()
+    cutoff = (datetime.now() - timedelta(seconds=60)).isoformat()
     with get_conn() as conn:
-        conn.execute("""
+        existing = conn.execute(
+            "SELECT id FROM kalshi_bets WHERE symbol=? AND bet=? AND ts >= ?",
+            (symbol, bet, cutoff)
+        ).fetchone()
+        if existing:
+            log.warning(f"log_kalshi_bet dedup: {symbol} {bet} already logged id={existing['id']} — skipping")
+            return existing["id"]
+        cur = conn.execute("""
             INSERT INTO kalshi_bets(ts,symbol,strike,bet,prob,yes_price,no_price,reason)
             VALUES(?,?,?,?,?,?,?,?)
-        """, (datetime.now().isoformat(), symbol, strike, bet, prob, yes_price, no_price, reason))
+        """, (ts, symbol, strike, bet, prob, yes_price, no_price, reason))
+        return cur.lastrowid
 
 def grade_kalshi_bet(bet_id, result, pnl):
     with get_conn() as conn:
@@ -219,13 +229,23 @@ def get_recent_kalshi_bets(limit=10) -> list:
 def log_options_trade(ticker, strategy, strike, premium, dte, iv, score,
                       contract_symbol=None, stock_price=None, regime=None, fear_greed=None, vix=None,
                       btc_signal=None, catalyst="", theta_per_day=0, source=None):
+    ts = datetime.now().isoformat()
+    cutoff = (datetime.now() - timedelta(seconds=60)).isoformat()
     with get_conn() as conn:
-        conn.execute("""
+        existing = conn.execute(
+            "SELECT id FROM options_trades WHERE ticker=? AND strategy=? AND strike=? AND ts >= ?",
+            (ticker, strategy, float(strike), cutoff)
+        ).fetchone()
+        if existing:
+            log.warning(f"log_options_trade dedup: {ticker} {strategy} ${strike} already logged id={existing['id']} — skipping")
+            return existing["id"]
+        cur = conn.execute("""
             INSERT INTO options_trades(ts,ticker,strategy,strike,premium,dte,iv,score,
             contract_symbol,stock_price,regime,fear_greed,vix,btc_signal,catalyst,theta_per_day)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (datetime.now().isoformat(), ticker, strategy, strike, premium, dte, iv, score,
+        """, (ts, ticker, strategy, strike, premium, dte, iv, score,
               contract_symbol, stock_price, regime, fear_greed, vix, btc_signal, catalyst, theta_per_day))
+        return cur.lastrowid
 
 def close_options_trade(trade_id, result, pnl):
     with get_conn() as conn:
@@ -276,13 +296,23 @@ def log_sell_premium_candidate(ticker, iv_rank, market_mode="", f_and_g=None):
 
 def log_prediction(symbol, price, target, low, high, target_prob, predicted_price,
                    range_prob, bet, reason, ev=0, kelly_size=0):
+    ts = datetime.now().isoformat()
+    cutoff = (datetime.now() - timedelta(seconds=60)).isoformat()
     with get_conn() as conn:
-        conn.execute("""
+        existing = conn.execute(
+            "SELECT id FROM predictions WHERE symbol=? AND target=? AND ts >= ?",
+            (symbol, float(target), cutoff)
+        ).fetchone()
+        if existing:
+            log.warning(f"log_prediction dedup: {symbol} target={target} already logged id={existing['id']} — skipping")
+            return existing["id"]
+        cur = conn.execute("""
             INSERT INTO predictions(ts,symbol,price,target,low,high,target_prob,
             predicted_price,range_prob,bet,reason,ev,kelly_size)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (datetime.now().isoformat(), symbol, price, target, low, high, target_prob,
+        """, (ts, symbol, price, target, low, high, target_prob,
               predicted_price, range_prob, bet, reason, ev, kelly_size))
+        return cur.lastrowid
 
 def get_prediction_stats() -> dict:
     with get_conn() as conn:

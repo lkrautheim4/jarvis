@@ -441,12 +441,15 @@ def run_prediction(symbol: str):
     # 4. Ask Claude (with full memory context)
     pred = ask_claude(symbol, price, target, low, high, rsi, momentum)
 
-    # 5. Log this prediction
-    btc_memory.log_prediction(
-        symbol, price, target, low, high,
-        pred["target_prob"], pred["predicted_price"],
-        pred["range_prob"],  pred["bet"], pred["reason"]
-    )
+    # 5. Log this prediction — skip write on API failure (never pollute DB with stubs)
+    if pred.get("reason") == "Claude unavailable":
+        log.error(f"run_prediction: Claude unavailable for {symbol} — skipping DB write")
+    else:
+        btc_memory.log_prediction(
+            symbol, price, target, low, high,
+            pred["target_prob"], pred["predicted_price"],
+            pred["range_prob"],  pred["bet"], pred["reason"]
+        )
 
     # 6. Build Telegram message
     next_hour  = str((datetime.now(timezone.utc).hour + 1) % 24) + ":00"

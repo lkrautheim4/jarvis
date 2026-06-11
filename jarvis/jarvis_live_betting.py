@@ -104,6 +104,11 @@ def check_daily_reset(brain: dict) -> dict:
         brain["daily_date"]          = today
         brain["daily_start_balance"] = brain.get("bankroll", STARTING_BANKROLL)
         brain["daily_losses"]        = 0.0
+        brain["consecutive_losses"]  = 0
+        # Auto-clear streak halt at midnight — preserve manual halts
+        if brain.get("halted") and "consecutive losses" in brain.get("halt_reason", ""):
+            brain["halted"]      = False
+            brain["halt_reason"] = ""
     return brain
 
 # ── Halt checks ─────────────────────────────────────────────────────────────
@@ -359,6 +364,11 @@ def record_result(won: bool, pnl: float, tg_func):
     if won:
         brain["consecutive_wins"]   = brain.get("consecutive_wins", 0) + 1
         brain["consecutive_losses"] = 0
+        # Auto-clear streak-based halt on WIN (manual halts require explicit RESUME)
+        if brain.get("halted") and "consecutive losses" in brain.get("halt_reason", ""):
+            brain["halted"]      = False
+            brain["halt_reason"] = ""
+            tg_func("✅ Streak halt auto-cleared — next graded win lifted the block")
     else:
         brain["consecutive_losses"] = brain.get("consecutive_losses", 0) + 1
         brain["consecutive_wins"]   = 0
