@@ -240,6 +240,7 @@ def main():
                 elif text == "HELP":
                     tg("BTC <target> <low> <high>\nETH <target> <low> <high>\nSTATUS")
 
+            jarvis_brain.update_bot_heartbeat("lenny_trader_bot")
             time.sleep(10)
 
         except Exception as e:

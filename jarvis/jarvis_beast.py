@@ -543,13 +543,13 @@ def main():
             if _regime == "RISK_OFF" or _risk == "EXTREME":
                 log.info(f"Beast sleeping — {_regime}/{_risk}")
                 _jb_hb.update_bot_heartbeat("jarvis_beast")
-
                 time.sleep(1800)  # 30 min sleep when blocked
                 continue
             run_scan(brain)
             save_brain(brain)
         except Exception as e:
             log.error(f"Scan error: {e}")
+        _jb_hb.update_bot_heartbeat("jarvis_beast")
         time.sleep(INTERVAL)
 
 if __name__ == "__main__":

@@ -469,6 +469,7 @@ def main():
                 scan_13f(data)
                 last_fund = now
 
+            jarvis_brain.update_bot_heartbeat("jarvis_level5")
             time.sleep(30)
 
         except Exception as e:

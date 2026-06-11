@@ -574,4 +574,5 @@ if __name__ == "__main__":
             import traceback
             log.error(f"Cycle error: {e}\n{traceback.format_exc()}")
             tg(f"⚠️ Prediction cycle error: {e}")
+        jarvis_brain.update_bot_heartbeat("lenny_predictions")
         time.sleep(1)

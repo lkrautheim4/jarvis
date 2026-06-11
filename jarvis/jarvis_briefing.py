@@ -17,6 +17,7 @@ from jarvis_secrets import CLAUDE_API_KEY as CLAUDE_KEY
 import sys
 sys.path.insert(0, "/root/jarvis")
 import jarvis_central_brain as brain
+import jarvis_brain as _jb_hb
 
 BOTS = {
     "jarvis_master":       "/root/jarvis/jarvis_master.py",
@@ -196,6 +197,7 @@ def main():
                 send_morning_briefing()
                 last_briefing_date = today
 
+            _jb_hb.update_bot_heartbeat("jarvis_briefing")
             time.sleep(30)
 
         except Exception as e:

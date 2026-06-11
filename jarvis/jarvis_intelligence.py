@@ -1092,6 +1092,7 @@ def main():
             last_weekly_day = current_day
             generate_weekly_report(intel)
 
+        _news_brain.update_bot_heartbeat("jarvis_intelligence")
         time.sleep(10)
 
 if __name__ == "__main__":

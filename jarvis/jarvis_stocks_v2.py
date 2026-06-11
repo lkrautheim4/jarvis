@@ -7,6 +7,10 @@ Upgrades: Better error handling, safe brain reads
 import json, time, math, requests, os
 from datetime import datetime, timedelta
 import logging
+try:
+    import jarvis_brain as _jb_hb
+except Exception:
+    _jb_hb = None
 
 logging.basicConfig(level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
@@ -395,6 +399,8 @@ def main():
         except Exception as e:
             log.error(f"Main loop error: {e}")
 
+        if _jb_hb:
+            _jb_hb.update_bot_heartbeat("jarvis_stocks_v2")
         time.sleep(SCAN_INTERVAL)
 
 if __name__ == "__main__":
