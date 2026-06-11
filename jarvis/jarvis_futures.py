@@ -132,7 +132,9 @@ def claude_confidence_futures(symbol, rsi, btc_signal, market_mood):
         text = r.json()['content'][0]['text'].strip()
         parts = text.split('|')
         decision = parts[0].strip()
-        score = int(parts[1].strip()) if len(parts) > 1 else 5
+        _raw = parts[1].strip() if len(parts) > 1 else "5"
+        _digits = ''.join(filter(str.isdigit, _raw))
+        score = int(_digits) if _digits else 5
         reason = parts[2].strip() if len(parts) > 2 else ''
         log.info('Claude futures: ' + decision + ' score=' + str(score) + ' ' + reason)
         return decision == 'BUY' and score >= 7, score, reason
