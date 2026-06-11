@@ -259,7 +259,7 @@ def calculate_correlations():
 
 # ── REGIME DETECTOR ───────────────────────────────────────
 
-def compute_beast_action(regime, confidence, fg, pcr):
+def compute_beast_action(regime, confidence, fg, pcr, equity_fg_val=50):
     """
     Derive the beast action string from regime + live macro indicators.
     Replaces the old static regime→string lookup with rule-based gating:
@@ -267,8 +267,9 @@ def compute_beast_action(regime, confidence, fg, pcr):
       - confidence <65 caps any buy at 'CAUTIOUS BUY — confirm before sizing up'
       - F&G <25 appends 'SENTIMENT EXTREME FEAR — reduce size'
       - Put/Call >0.9 appends 'HEDGING ELEVATED — no size multiplier'
+    Uses equity F&G (CNN) for all gates; crypto F&G (fg) is not weighted here.
     """
-    fg_val = fg["current"]
+    fg_val = equity_fg_val   # equity F&G gates buy-aggressively and sentiment warnings
     pcr_val = pcr["ratio"]
     CAUTIOUS = "CAUTIOUS BUY — confirm before sizing up"
 
@@ -297,10 +298,12 @@ def compute_beast_action(regime, confidence, fg, pcr):
 
     return action
 
-def detect_regime(vix, fg, yield_data, pcr, correlations, btc_signal):
+def detect_regime(vix, fg, yield_data, pcr, correlations, btc_signal, equity_fg_val=50):
     """
     Detect market regime from multiple signals.
-    Returns regime + size multiplier + beast action
+    Returns regime + size multiplier + beast action.
+    equity_fg_val: CNN equity Fear & Greed (scored). fg (crypto F&G) is passed for
+    display/beast-action only and does NOT contribute to the regime score.
     """
     scores = {"RISK_ON": 0, "RISK_OFF": 0, "STAGFLATION": 0, "RECOVERY": 0}
 
@@ -316,15 +319,15 @@ def detect_regime(vix, fg, yield_data, pcr, correlations, btc_signal):
     elif vix["value"] > 25:
         scores["RISK_OFF"] += 1
 
-    # Fear & Greed
-    fg_val = fg["current"]
-    if fg_val > 65:
+    # Fear & Greed — equity F&G (CNN) is scored; crypto F&G (fg["current"]) is not weighted
+    eq_val = equity_fg_val
+    if eq_val > 65:
         scores["RISK_ON"] += 1
-    elif fg_val > 50:
+    elif eq_val > 50:
         scores["RISK_ON"] += 1
-    elif fg_val < 25:
+    elif eq_val < 25:
         scores["RISK_OFF"] += 2
-    elif fg_val < 40:
+    elif eq_val < 40:
         scores["RISK_OFF"] += 1
 
     # Yield direction
@@ -368,7 +371,8 @@ def detect_regime(vix, fg, yield_data, pcr, correlations, btc_signal):
     }.get(regime, 1.0)
 
     # Beast action — rule-based gating on confidence + macro indicators
-    beast_action = compute_beast_action(regime, confidence, fg, pcr)
+    beast_action = compute_beast_action(regime, confidence, fg, pcr,
+                                        equity_fg_val=equity_fg_val)
 
     # Focus sectors
     focus = {
@@ -395,7 +399,8 @@ def check_macro_defense(events):
             return True, event.get("name", "High impact event")
     return False, None
 
-def format_regime_message(regime_data, vix, fg, yield_data, pcr, correlations):
+def format_regime_message(regime_data, vix, fg, yield_data, pcr, correlations,
+                          equity_fg_val=50):
     """Format Telegram message for regime change"""
     regime = regime_data["regime"]
     emoji = {"RISK_ON":"🟢","RISK_OFF":"🔴","STAGFLATION":"🟡","RECOVERY":"🔵"}.get(regime,"⚪")
@@ -405,7 +410,8 @@ def format_regime_message(regime_data, vix, fg, yield_data, pcr, correlations):
         f"Confidence: {regime_data['confidence']}%",
         f"{'='*22}",
         f"VIX: {vix['value']:.1f} ({vix['direction']})",
-        f"Fear&Greed: {fg['current']} ({fg['trend']})",
+        f"Equity F&G: {equity_fg_val} (scored)",
+        f"Crypto F&G: {fg['current']} ({fg['trend']}) [display only]",
         f"10yr Yield: {yield_data['value']:.2f}% ({yield_data['direction']})",
         f"Put/Call: {pcr['ratio']} ({pcr['sentiment']})",
         f"{'='*22}",
@@ -427,8 +433,23 @@ def compute_market_mode(f_and_g, vix, regime):
 
     PROFIT  = F&G >= 30 AND VIX < 20 AND regime != RISK_OFF (all must hold).
     PROTECTION = any of F&G < 30, VIX >= 20, regime == RISK_OFF.
+
+    Uses equity F&G (CNN) from jarvis_central_brain.json with a 2-hour staleness
+    guard (same guard as jarvis_options_brain). Falls back to the passed f_and_g
+    (which callers should also set to equity F&G) if the brain value is stale/missing.
     """
-    profit = (f_and_g >= 30) and (vix < 20) and (regime != "RISK_OFF")
+    eq_fg = f_and_g   # fallback
+    try:
+        cb_data = json.load(open(BRAIN_FILE))
+        eq = cb_data.get("equity_fear_greed") or {}
+        val, ts_str = eq.get("value"), eq.get("ts", "")
+        if val is not None and ts_str:
+            age_h = (datetime.now() - datetime.fromisoformat(ts_str)).total_seconds() / 3600
+            if age_h <= 2:
+                eq_fg = val
+    except Exception:
+        pass
+    profit = (eq_fg >= 30) and (vix < 20) and (regime != "RISK_OFF")
     mode = "PROFIT" if profit else "PROTECTION"
     try:
         import jarvis_memory_db as memdb
@@ -471,8 +492,12 @@ def run_cycle():
     cb = load(BRAIN_FILE)
     btc_signal = cb.get("btc_signal", "neutral")
 
+    # Equity F&G value for regime scoring (crypto F&G is logged only)
+    equity_fg_val = eq_fg["value"] if eq_fg else 50
+
     # Detect regime
-    regime_data = detect_regime(vix, fg, yield_data, pcr, correlations, btc_signal)
+    regime_data = detect_regime(vix, fg, yield_data, pcr, correlations, btc_signal,
+                                equity_fg_val=equity_fg_val)
 
     # Check macro defense
     defensive, event_name = check_macro_defense(events)
@@ -521,13 +546,15 @@ def run_cycle():
         log.error(f"memdb regime write: {_re}")
 
     # High-level market mode (PROFIT / PROTECTION) -> jarvis_memory.db brain table.
-    compute_market_mode(fg.get("current", 50), vix["value"], regime_data["regime"])
+    # Pass equity F&G as primary argument (compute_market_mode also reads it from brain).
+    compute_market_mode(equity_fg_val, vix["value"], regime_data["regime"])
 
     # Alert on regime changes
     macro_old = load(MACRO_FILE + ".prev", {})
     old_regime = macro_old.get("regime", "")
     if old_regime and old_regime != regime_data["regime"]:
-        msg = format_regime_message(regime_data, vix, fg, yield_data, pcr, correlations)
+        msg = format_regime_message(regime_data, vix, fg, yield_data, pcr, correlations,
+                                    equity_fg_val=equity_fg_val)
         tg(f"⚠️ REGIME CHANGE: {old_regime} → {regime_data['regime']}\n{msg}")
         log.info(f"Regime changed: {old_regime} → {regime_data['regime']}")
     save(MACRO_FILE + ".prev", {"regime": regime_data["regime"]})
@@ -551,7 +578,7 @@ def run_cycle():
         log.error(f"regime confidence save: {_ce}")
 
     log.info(f"Regime: {regime_data['regime']} ({regime_data['confidence']}%) "
-             f"VIX:{vix['value']:.1f} F&G:{fg['current']} "
+             f"VIX:{vix['value']:.1f} F&G(equity):{equity_fg_val} F&G(crypto):{fg['current']} "
              f"Yield:{yield_data['value']:.2f}% PCR:{pcr['ratio']}")
     return regime_data
 

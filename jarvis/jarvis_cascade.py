@@ -31,8 +31,9 @@ LEVELS = [
     ("L1", -1.5,  "🔴 CASCADE L1: SPY -1.5%. Tightening rules. Forcing put scan."),
     ("L2", -2.5,  "🚨 CASCADE L2: SPY -2.5%. FULL PROTECTION. No longs. YES bets disabled."),
 ]
-BOUNCE_PCT   = 0.5    # SPY must bounce >=0.5% off intraday low for a dead-cat
-VIX_ELEVATED = 20.0   # "VIX still elevated" threshold (matches protection-mode VIX)
+BOUNCE_PCT      = 0.5    # SPY must bounce >=0.5% off intraday low for a dead-cat
+VIX_ELEVATED    = 20.0   # "VIX still elevated" threshold (matches protection-mode VIX)
+RECOVERY_CYCLES = 3      # consecutive 5-min cycles above trigger threshold = confirmed recovery
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
@@ -165,7 +166,10 @@ def save_state(s):
 
 
 def fresh_state(key):
-    return {"session": key, "fired": [], "cascade_active": False, "rip_fired": False}
+    return {
+        "session": key, "fired": [], "cascade_active": False, "rip_fired": False,
+        "l0_recovery_count": 0, "l1_recovery_count": 0, "l2_recovery_count": 0,
+    }
 
 
 # ── actions ──────────────────────────────────────────────────────────────────
@@ -216,6 +220,62 @@ def check_dead_cat(spy, vix, state):
                 notes=f"bounce {bounce:.2f}% off low", ticker_snapshot=get_ticker_snapshot())
         except Exception as e:
             log.error(f"log_market_event DEAD_CAT: {e}")
+
+
+def clear_level(level, spy, vix, state):
+    """Send all-clear, undo the level's brain overrides, and log the recovery event."""
+    msgs = {
+        "L0": f"✅ CASCADE L0 ALL-CLEAR: SPY {spy['pct']:+.2f}% recovered above -0.75%.",
+        "L1": (f"✅ CASCADE L1 ALL-CLEAR: SPY {spy['pct']:+.2f}% — above -1.5% for 3 cycles.\n"
+               "Kalshi floors restored to default."),
+        "L2": (f"✅ CASCADE L2 ALL-CLEAR: SPY {spy['pct']:+.2f}% — above -2.5% for 3 cycles.\n"
+               "Kalshi YES re-enabled. PROTECTION mode handed back to macro."),
+    }
+    msg = msgs.get(level, f"✅ CASCADE {level} ALL-CLEAR")
+    tg(msg)
+    try:
+        memdb.brain_set(f"cascade_{level.lower()}_fired", 0)
+        if level in ("L1", "L2"):
+            memdb.brain_set("kalshi_yes_floor", None)
+            memdb.brain_set("kalshi_no_floor", None)
+        if level == "L1":
+            memdb.brain_set("force_put_scan", False)
+        if level == "L2":
+            memdb.brain_set("kalshi_yes_disabled", False)
+            # Do NOT write market_mode here — the loop stops asserting PROTECTION, so
+            # macro's next compute_market_mode() call (within ≤30 min) takes over.
+        log.info(f"CASCADE {level} cleared — all-clear sent, brain flags reset")
+    except Exception as e:
+        log.error(f"clear_level {level}: {e}")
+    try:
+        memdb.log_market_event(
+            event_type=f"CASCADE_{level}_CLEARED",
+            spy_price=spy["price"], spy_pct_change=spy["pct"],
+            vix=vix, market_mode=memdb.brain_get("market_mode"),
+            notes=msg)
+    except Exception as e:
+        log.error(f"log_market_event clear {level}: {e}")
+
+
+def check_recovery(spy, vix, state):
+    """Check if each fired level has recovered past its trigger threshold for
+    RECOVERY_CYCLES consecutive 5-min cycles. Must be called once per poll cycle.
+    Mutates state in-place (recovery counters)."""
+    for lv, thresh, _ in reversed(LEVELS):   # deepest first: L2 → L1 → L0
+        fired_key   = f"cascade_{lv.lower()}_fired"
+        counter_key = f"{lv.lower()}_recovery_count"
+        if not memdb.brain_get(fired_key):
+            state[counter_key] = 0
+            continue
+        if spy["pct"] > thresh:
+            state[counter_key] = state.get(counter_key, 0) + 1
+            log.info(f"{lv} recovery: {state[counter_key]}/{RECOVERY_CYCLES} cycles "
+                     f"(SPY {spy['pct']:+.2f}% > threshold {thresh:+.2f}%)")
+            if state[counter_key] >= RECOVERY_CYCLES:
+                clear_level(lv, spy, vix, state)
+                state[counter_key] = 0
+        else:
+            state[counter_key] = 0   # dipped back below threshold — reset counter
 
 
 def market_open(now_et):
@@ -276,7 +336,24 @@ def main():
 
             # Dead-cat detector runs after any cascade is active.
             check_dead_cat(spy, vix, state)
+
+            # Recovery check — clears fired flags when SPY sustainably recovers.
+            check_recovery(spy, vix, state)
             save_state(state)
+
+            # While L2 is active, re-assert PROTECTION every 5-min cycle so a macro
+            # compute_market_mode() call cannot lift it between cascade polls.
+            if memdb.brain_get("cascade_l2_fired"):
+                memdb.brain_set("market_mode", "PROTECTION")
+
+            # Log breaker state every cycle.
+            _l1_on = bool(memdb.brain_get("cascade_l1_fired"))
+            _l2_on = bool(memdb.brain_get("cascade_l2_fired"))
+            log.info(
+                f"Breaker: L1={'ON' if _l1_on else 'off'} L2={'ON' if _l2_on else 'off'} | "
+                f"SPY {spy['pct']:+.2f}% | VIX {vix:.1f} | "
+                f"mode={memdb.brain_get('market_mode')}"
+            )
 
             # ── Intraday F&G/VIX drift vs morning baseline (checked every 30 min) ──
             if "fg_baseline" not in state:
