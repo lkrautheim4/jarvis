@@ -177,7 +177,8 @@ def run_grader():
                 reason, exit_price, pnl, result, _ = c
                 t['status'] = 'paper_closed'
                 t['result'] = result
-                t['exit_price'] = exit_price
+                t['exit_premium'] = exit_price  # option premium at exit
+                t['exit_price'] = None           # stock price at exit (not fetched from chain)
                 t['pnl'] = pnl
                 t['exit_date'] = datetime.now().strftime('%Y-%m-%d')
                 t['exit_time'] = datetime.now().strftime('%H:%M')

@@ -617,9 +617,23 @@ def grade_closed_trades(brain):
         trade["pnl"] = pnl
 
         # Sync SQLite row
-        if DB_ENABLED and trade.get("db_id"):
+        if DB_ENABLED:
             try:
-                memdb.close_options_trade(trade["db_id"], result, pnl)
+                exit_premium = pt.get("exit_premium")
+                exit_date = pt.get("exit_date")
+                if trade.get("db_id"):
+                    memdb.close_options_trade(trade["db_id"], result, pnl,
+                                              exit_premium=exit_premium, exit_date=exit_date)
+                else:
+                    entry_date = ts[:10] if ts else pt.get("entry_date", "")
+                    updated = memdb.close_options_trade_by_key(
+                        trade["ticker"], trade["strategy"], trade["strike"],
+                        entry_date, result, pnl,
+                        exit_premium=exit_premium, exit_date=exit_date
+                    )
+                    if updated:
+                        log.info(f"DB sync by key: {updated} row(s) for "
+                                 f"{trade['ticker']} {trade['strategy']}")
             except Exception as _dbe:
                 log.error(f"DB close_options_trade failed: {_dbe}")
 
@@ -971,9 +985,11 @@ def scan_and_alert(brain, ctx):
         # Determine what to scan. PROTECTION = puts only (no calls); PROFIT = normal.
         scan_types = []
         if protection:
+            # put_sell is never valid in PROTECTION mode — log when gate blocks it
             if config["type"] in ["wheel", "both"]:
-                scan_types.append("put_sell")
-            if config["type"] in ["momentum", "both"]:
+                log.info(f"GATE: put_sell blocked — PROTECTION mode ({ticker})")
+            # wheel and momentum both scan put_buy in PROTECTION mode
+            if config["type"] in ["wheel", "momentum", "both"]:
                 scan_types.append("put_buy")
         else:
             if config["type"] in ["wheel","both"] and fg < 55:

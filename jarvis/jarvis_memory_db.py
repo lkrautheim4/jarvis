@@ -38,9 +38,17 @@ def _migrate_sell_premium(conn):
         conn.execute("ALTER TABLE sell_premium_candidates RENAME COLUMN timestamp TO ts")
         log.info("Migrated sell_premium_candidates.timestamp -> ts")
 
+def _migrate_options_trades_v2(conn):
+    """Add exit_premium column to options_trades if absent (idempotent)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(options_trades)").fetchall()]
+    if "exit_premium" not in cols:
+        conn.execute("ALTER TABLE options_trades ADD COLUMN exit_premium REAL")
+        log.info("Migrated options_trades: added exit_premium column")
+
 def init_db():
     with get_conn() as conn:
-        _migrate_sell_premium(conn)   # heal legacy `timestamp` column before index build
+        _migrate_sell_premium(conn)       # heal legacy `timestamp` column before index build
+        _migrate_options_trades_v2(conn)  # add exit_premium column
         conn.executescript("""
         CREATE TABLE IF NOT EXISTS brain (
             key TEXT PRIMARY KEY,
@@ -247,11 +255,28 @@ def log_options_trade(ticker, strategy, strike, premium, dte, iv, score,
               contract_symbol, stock_price, regime, fear_greed, vix, btc_signal, catalyst, theta_per_day))
         return cur.lastrowid
 
-def close_options_trade(trade_id, result, pnl):
+def close_options_trade(trade_id, result, pnl, exit_premium=None, exit_date=None):
     with get_conn() as conn:
         conn.execute("""
-            UPDATE options_trades SET status='closed', result=?, pnl=?, closed_at=? WHERE id=?
-        """, (result, pnl, datetime.now().isoformat(), trade_id))
+            UPDATE options_trades SET status='closed', result=?, pnl=?, closed_at=?,
+            exit_premium=?, exit_date=? WHERE id=?
+        """, (result, pnl, datetime.now().isoformat(), exit_premium, exit_date, trade_id))
+
+def close_options_trade_by_key(ticker, strategy, strike, entry_date_str,
+                                result, pnl, exit_premium=None, exit_date=None):
+    """Fallback close: match by ticker+strategy+strike+entry_date when db_id is unknown."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM options_trades WHERE ticker=? AND strategy=? AND strike=? "
+            "AND ts LIKE ? AND status NOT IN ('closed')",
+            (ticker, strategy, float(strike), f"{entry_date_str}%")
+        ).fetchall()
+        for row in rows:
+            conn.execute("""
+                UPDATE options_trades SET status='closed', result=?, pnl=?, closed_at=?,
+                exit_premium=?, exit_date=? WHERE id=?
+            """, (result, pnl, datetime.now().isoformat(), exit_premium, exit_date, row["id"]))
+        return len(rows)
 
 def get_options_stats() -> dict:
     with get_conn() as conn:
