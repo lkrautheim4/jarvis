@@ -32,7 +32,10 @@ TG_TRADER      = __import__("jarvis_secrets").TG_TOKEN_TRADER
 TG_PRED        = "8713474292:AAEtNCL6xuqIbS3Adf5KsFhH5xZ3XQ7Rz0o"
 CHAT_ID        = "7534553840"
 MEMORY_FILE    = "/root/jarvis/btc_memory.json"
-BRAIN_FILE     = "/root/jarvis/kalshi_brain.json"
+BRAIN_FILE         = "/root/jarvis/kalshi_brain.json"
+SKIPS_ARCHIVE_FILE = "/root/jarvis/kalshi_skips_archive.json"
+SKIP_CAP           = 5000
+SCHEMA_VERSION     = 2
 MASTER_FILE    = "/root/jarvis/jarvis_master_brain.json"
 PATTERN_FILE   = "/root/jarvis/jarvis_patterns.json"
 # Scalp settings
@@ -1083,19 +1086,53 @@ Pattern: {pat_note}
         why = "non-edge hour" if now_edt not in EDGE_HOURS else "flat regime"
         log.info(f"Alert suppressed ({why}: hr={now_edt} EDT, regime={regime_zone}) — paper-only")
 
-    # Log to memory with fingerprint
-    mem = load_memory()
-    mem["predictions"].append({
+    # Task 8: market state at decision time
+    _yes_p  = best.get("yes", 0.0)
+    _no_p   = best.get("no",  0.0)
+    _spread = round(abs(_yes_p - _no_p), 4)
+    try:
+        _edge_pct = round(abs(float(prob.replace("%", "")) / 100 - _yes_p) * 100, 1)
+    except Exception:
+        _edge_pct = None
+
+    snap = {
         "id": datetime.now(timezone.utc).strftime("%Y%m%d%H%M"),
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        "symbol": "BTC", "price_at_pred": round(price,2),
+        "symbol": "BTC", "price_at_pred": round(price, 2),
         "target": target, "target_prob": prob,
         "predicted_price": pred_px, "bet": bet, "reason": reason,
         "fingerprint": fingerprint,
-        "actual_price": None, "target_hit": None, "graded": False
-    })
+        "kalshi_yes_price": _yes_p, "spread": _spread, "edge_pct": _edge_pct,  # Task 8
+        "actual_price": None, "target_hit": None, "graded": False,
+        "source": "auto", "schema_version": SCHEMA_VERSION,  # Task 10
+    }
+
+    # Log to memory with fingerprint
+    mem = load_memory()
+    mem["predictions"].append(snap)
     mem["stats"]["total_predictions"] = len(mem["predictions"])
     save_memory(mem)
+
+    # Task 6: log skips to kalshi_brain with cap+rotation
+    if bet == "SKIP":
+        kb = load_kalshi_brain()
+        if "skips" not in kb: kb["skips"] = []
+        skip_rec = dict(snap)
+        skip_rec["skip_reason"] = reason
+        kb["skips"].append(skip_rec)
+        if len(kb["skips"]) > SKIP_CAP:
+            overflow = kb["skips"][:-SKIP_CAP]
+            kb["skips"] = kb["skips"][-SKIP_CAP:]
+            try:
+                archive = []
+                if os.path.exists(SKIPS_ARCHIVE_FILE):
+                    with open(SKIPS_ARCHIVE_FILE) as f: archive = json.load(f)
+                archive.extend(overflow)
+                with open(SKIPS_ARCHIVE_FILE, "w") as f: json.dump(archive, f, indent=2)
+            except Exception as e:
+                log.warning(f"skips rotate: {e}")
+        save_kalshi_brain(kb)
+
     log.info(f"Prediction {'ALERTED' if alert_ok else 'PAPER-ONLY'} BTC target={target} bet={bet} "
              f"prob={prob} hr={now_edt}EDT regime={regime_zone} fingerprint={fingerprint}")
 
@@ -1116,7 +1153,28 @@ def grade_predictions(current_price):
         if datetime.now(timezone.utc) < pred_ts + timedelta(hours=1): break
         pred["actual_price"] = round(current_price, 2)
         pred["target_hit"]   = current_price >= pred["target"]
-        pred["graded"]       = True
+
+        # Task 7: resolution context from btc tick history
+        try:
+            pred_ts_utc = datetime.strptime(pred["ts"], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            window_end  = pred_ts_utc + timedelta(hours=1)
+            window_prices = [
+                p["price"] for p in mem.get("prices", [])
+                if isinstance(p.get("ts"), str) and
+                   pred_ts_utc <= datetime.strptime(p["ts"], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc) <= window_end
+            ]
+            if window_prices:
+                if pred.get("bet") == "YES":
+                    pred["max_favorable"] = max(window_prices)
+                    pred["max_adverse"]   = min(window_prices)
+                elif pred.get("bet") == "NO":
+                    pred["max_favorable"] = min(window_prices)
+                    pred["max_adverse"]   = max(window_prices)
+            pred["final_margin"] = round(current_price - pred["target"], 2)
+        except Exception:
+            pass
+
+        pred["graded"] = True
         s = mem["stats"]
         if pred["target_hit"]:
             s["correct_target"] = s.get("correct_target",0)+1
@@ -1148,11 +1206,34 @@ def load_kalshi_brain():
     if os.path.exists(BRAIN_FILE):
         try: return json.load(open(BRAIN_FILE))
         except: pass
-    return {"bets":[],"preds":[],"stats":{"total":0,"wins":0,"losses":0,"profit":0.0,
-            "yes_total":0,"yes_wins":0,"no_total":0,"no_wins":0,"pred_total":0,"pred_correct":0}}
+    return {"bets":[],"preds":[],"kalshi_manual_bets":[],"skips":[],
+            "stats":{"total":0,"wins":0,"losses":0,"profit":0.0,
+            "yes_total":0,"yes_wins":0,"no_total":0,"no_wins":0,
+            "total_earnings":0,"total_contracts":0,"pred_total":0,"pred_correct":0}}
 
 def save_kalshi_brain(kb):
     with open(BRAIN_FILE,"w") as f: json.dump(kb,f,indent=2)
+
+def recompute_kalshi_stats(kb):
+    """Task 9: recompute stats from raw records, filtering archived/suspect."""
+    bets  = [b for b in kb.get("bets",  []) if not b.get("archived") and not b.get("suspect")]
+    preds = [p for p in kb.get("preds", []) if not p.get("archived") and not p.get("suspect_grade")]
+    y = [b for b in bets if b.get("side") == "YES"]
+    n = [b for b in bets if b.get("side") == "NO"]
+    graded = [p for p in preds if p.get("correct") is not None]
+    ex = kb.get("stats", {})
+    return {
+        "total":           len(bets),
+        "wins":            sum(1 for b in bets if b.get("result") == "WIN"),
+        "losses":          sum(1 for b in bets if b.get("result") == "LOSS"),
+        "profit":          round(sum(b.get("pnl") or 0 for b in bets), 2),
+        "yes_total":       len(y),   "yes_wins": sum(1 for b in y if b.get("result") == "WIN"),
+        "no_total":        len(n),   "no_wins":  sum(1 for b in n if b.get("result") == "WIN"),
+        "pred_total":      len(graded),
+        "pred_correct":    sum(1 for p in graded if p.get("correct")),
+        "total_earnings":  ex.get("total_earnings",  0),
+        "total_contracts": ex.get("total_contracts", 0),
+    }
 
 def log_bet(side, dollars, btype="hourly"):
     kb = load_kalshi_brain()
@@ -1171,16 +1252,11 @@ def grade_bet(won, actual_payout=None):
             bet["result"] = "WIN" if won else "LOSS"
             dollars = bet.get("dollars", 50)
             if won:
-                # Use actual payout if provided, otherwise use stake as placeholder
                 bet["pnl"] = round(actual_payout - dollars, 2) if actual_payout else dollars
                 bet["payout"] = actual_payout or dollars
-                kb["stats"]["wins"] += 1
-                if bet["side"] == "YES": kb["stats"]["yes_wins"] += 1
-                else: kb["stats"]["no_wins"] += 1
             else:
                 bet["pnl"] = -dollars
-                kb["stats"]["losses"] += 1
-            kb["stats"]["profit"] = round(kb["stats"]["profit"] + bet["pnl"], 2)
+            kb["stats"] = recompute_kalshi_stats(kb)  # Task 9
             save_kalshi_brain(kb)
             return bet, kb
     return None, kb
@@ -1207,7 +1283,7 @@ def grade_pred_call(actual_price):
             pred["result"] = "ABOVE" if actually_above else "BELOW"
             pred["actual_price"] = actual_price
             pred["correct"] = correct
-            if correct: kb["stats"]["pred_correct"] = kb["stats"].get("pred_correct",0)+1
+            kb["stats"] = recompute_kalshi_stats(kb)  # Task 9
             save_kalshi_brain(kb)
             return pred, correct
     return None, None
@@ -1345,6 +1421,27 @@ Submit your call via the submit_direction tool (current BTC = ${btc_now:,.0f})."
                 reason = str(data.get("reason", "")).strip()
                 bet_side = "YES" if ab=="ABOVE" else "NO"
                 log_pred_call(ref_price, ab, conf, mins)
+                # Task 5: manual snapshot with full market context
+                _bm = markets[0] if markets else None
+                _yp = _bm.get("yes", 0.0) if _bm else 0.0
+                _np = _bm.get("no",  0.0) if _bm else 0.0
+                try:    _edge = round(abs(float(conf.replace("%",""))/100 - _yp)*100, 1)
+                except: _edge = None
+                _manual = {
+                    "id": datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+                    "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                    "symbol": "BTC", "price_at_pred": round(btc_now, 2),
+                    "target": ref_price, "target_prob": conf,
+                    "predicted_price": None, "bet": bet_side, "reason": reason,
+                    "fingerprint": fingerprint, "mins": mins,
+                    "kalshi_yes_price": _yp, "spread": round(abs(_yp-_np),4), "edge_pct": _edge,
+                    "actual_price": None, "target_hit": None, "graded": False,
+                    "source": "manual", "schema_version": SCHEMA_VERSION,
+                }
+                _kb = load_kalshi_brain()
+                if "kalshi_manual_bets" not in _kb: _kb["kalshi_manual_bets"] = []
+                _kb["kalshi_manual_bets"].append(_manual)
+                save_kalshi_brain(_kb)
                 _, pat_note = get_pattern_modifier(fingerprint)
                 tg(f"{ab} ${ref_price:,.0f} in {mins}min\n{conf} — BET {bet_side}\n{reason}\n{pat_note}")
             else:
@@ -1385,6 +1482,26 @@ Submit your call via the submit_direction tool (current BTC = ${btc_now:,.0f})."
         try:
             side = parts[1]; dollars = float(parts[2])
             log_bet(side, dollars, "15min")
+            # Task 5: manual snapshot
+            _p15 = get_btc_price_from_kalshi() or 0
+            _mkts15, _ = get_kalshi_markets(_p15 or 75000)
+            _bm15 = _mkts15[0] if _mkts15 else None
+            _yp15 = _bm15.get("yes",0.0) if _bm15 else 0.0
+            _np15 = _bm15.get("no", 0.0) if _bm15 else 0.0
+            _mb15 = {
+                "id": datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                "symbol":"BTC","price_at_pred":round(_p15,2),
+                "target":_bm15["strike"] if _bm15 else None,"target_prob":None,
+                "predicted_price":None,"bet":side,"reason":"manual BET15","fingerprint":None,
+                "kalshi_yes_price":_yp15,"spread":round(abs(_yp15-_np15),4),"edge_pct":None,
+                "dollars":dollars,"actual_price":None,"target_hit":None,"graded":False,
+                "source":"manual","schema_version":SCHEMA_VERSION,
+            }
+            _kb15 = load_kalshi_brain()
+            if "kalshi_manual_bets" not in _kb15: _kb15["kalshi_manual_bets"] = []
+            _kb15["kalshi_manual_bets"].append(_mb15)
+            save_kalshi_brain(_kb15)
             tg(f"Logged 15-MIN {side} ${dollars:.0f}\nText WIN <payout> or LOSS when done")
         except: tg("Format: BET15 YES 50")
 
@@ -1392,6 +1509,26 @@ Submit your call via the submit_direction tool (current BTC = ${btc_now:,.0f})."
         try:
             parts = text.upper().split(); side = parts[1]; dollars = float(parts[2])
             log_bet(side, dollars, "hourly")
+            # Task 5: manual snapshot
+            _pb = get_btc_price_from_kalshi() or 0
+            _mktsb, _ = get_kalshi_markets(_pb or 75000)
+            _bmb = _mktsb[0] if _mktsb else None
+            _ypb = _bmb.get("yes",0.0) if _bmb else 0.0
+            _npb = _bmb.get("no", 0.0) if _bmb else 0.0
+            _mbb = {
+                "id": datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                "symbol":"BTC","price_at_pred":round(_pb,2),
+                "target":_bmb["strike"] if _bmb else None,"target_prob":None,
+                "predicted_price":None,"bet":side,"reason":"manual BET","fingerprint":None,
+                "kalshi_yes_price":_ypb,"spread":round(abs(_ypb-_npb),4),"edge_pct":None,
+                "dollars":dollars,"actual_price":None,"target_hit":None,"graded":False,
+                "source":"manual","schema_version":SCHEMA_VERSION,
+            }
+            _kbb = load_kalshi_brain()
+            if "kalshi_manual_bets" not in _kbb: _kbb["kalshi_manual_bets"] = []
+            _kbb["kalshi_manual_bets"].append(_mbb)
+            save_kalshi_brain(_kbb)
             tg(f"Logged {side} ${dollars:.0f}\nText WIN <payout> or LOSS when done")
         except: tg("Format: BET YES 50")
 
