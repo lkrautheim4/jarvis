@@ -213,6 +213,12 @@ def get_full_status():
 class JarvisHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args): pass
 
+    def handle(self):
+        try:
+            super().handle()
+        except ConnectionResetError:
+            pass
+
     def send_json(self, data, status=200):
         body = json.dumps(data).encode()
         self.send_response(status)
