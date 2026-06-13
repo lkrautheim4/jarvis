@@ -4,7 +4,6 @@ JARVIS WATCHDOG v2 — Hardened system monitor
 Upgrades:
 - Heartbeat-based dead detection (not just pgrep)
 - Fixed restart command (was calling missing jarvis_fix.py)
-- Removed jarvis_premium from BOTS list
 - Intel signal grading trigger (hourly)
 - RAM alert with bot kill recommendation
 - Duplicate process detection and cleanup
@@ -20,7 +19,7 @@ TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_TRADER
 TELEGRAM_CHAT  = "7534553840"
 JARVIS_DIR     = "/root/jarvis"
 
-# ── Bot registry — remove jarvis_premium ────────────────────────────────────
+# ── Bot registry ─────────────────────────────────────────────────────────────
 BOTS = [
     {"name": "jarvis_trump_monitor", "file": "jarvis_trump_monitor.py", "flag": "", "critical": False},
     {"name": "jarvis_master",        "file": "jarvis_master.py",        "flag": "-B", "critical": True},
@@ -37,6 +36,10 @@ BOTS = [
     {"name": "jarvis_futures",       "file": "jarvis_futures.py",       "flag": "-B", "critical": False},
     {"name": "lenny_trader_bot",     "file": "lenny_trader_bot.py",     "flag": "",   "critical": False},
     {"name": "jarvis_trader",        "file": "jarvis_trader.py",        "flag": "",   "critical": False},
+    {"name": "jarvis_premium",       "file": "jarvis_premium.py",       "flag": "-B", "critical": False},
+    {"name": "options_grader",       "file": "options_grader.py",       "flag": "-B", "critical": False},
+    {"name": "btc_ticker",           "file": "btc_ticker.py",           "flag": "",   "critical": False},
+    {"name": "jarvis_health",        "file": "jarvis_health.py",        "flag": "",   "critical": False},
 ]
 
 # Heartbeat timeout — bot considered dead if no heartbeat in N seconds

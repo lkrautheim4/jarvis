@@ -524,19 +524,24 @@ def run_cycle():
     }
     save(MACRO_FILE, macro)
 
-    # Update central brain
-    cb["macro_regime"]      = regime_data["regime"]
-    cb["macro_size_mult"]   = regime_data["size_multiplier"]
-    cb["macro_beast_action"]= regime_data["beast_action"]
-    cb["macro_focus"]       = regime_data["focus_sectors"]
-    cb["vix"]               = vix["value"]
-    cb["yield_10yr"]        = yield_data["value"]
-    cb["put_call_ratio"]    = pcr["ratio"]
-    cb["btc_spy_corr"]      = correlations.get("btc_spy", "UNKNOWN")
-    cb["macro_defensive"]   = defensive
+    # Update central brain via write_brain so SQLite + JSON stay in sync.
+    # Previously used save(BRAIN_FILE, cb) which only wrote JSON; SQLite kept
+    # stale RISK_OFF/0.0 values, which any subsequent write_brain call would
+    # read back from SQLite and reinstall over the correct JSON values.
+    _macro_updates = {
+        "macro_regime":       regime_data["regime"],
+        "macro_size_mult":    regime_data["size_multiplier"],
+        "macro_beast_action": regime_data["beast_action"],
+        "macro_focus":        regime_data["focus_sectors"],
+        "vix":                vix["value"],
+        "yield_10yr":         yield_data["value"],
+        "put_call_ratio":     pcr["ratio"],
+        "btc_spy_corr":       correlations.get("btc_spy", "UNKNOWN"),
+        "macro_defensive":    defensive,
+    }
     if eq_fg:
-        cb["equity_fear_greed"] = eq_fg
-    save(BRAIN_FILE, cb)
+        _macro_updates["equity_fear_greed"] = eq_fg
+    _jb_hb.write_brain(_macro_updates)
 
     # Canonical regime -> jarvis_memory.db brain table (all bots read it from here).
     try:

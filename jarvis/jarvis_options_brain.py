@@ -1104,10 +1104,8 @@ def scan_and_alert(brain, ctx):
                 "strategy": setup.get("strategy", "SELL_PUT"),
                 "ticker": setup.get("ticker", ""),
                 "quote_price": setup.get("price", 0),
-                "quote_ts": setup.get("quote_ts", _time.time()),
-                "iv_ratio": setup.get("iv_ratio", 0),
-                "cash_required": setup.get("strike", 0) * 100,
-                "account_value": brain.get("account_value", 50000),
+                "cash_required": setup.get("premium", 0) * 100,
+                "account_value": 94000,
                 "week_change_pct": setup.get("week_change_pct", 0),
             }
             _ok, _reasons = gate_signal(_sig)

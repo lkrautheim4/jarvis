@@ -120,7 +120,16 @@ def get_regime_with_confidence(ctx):
     brain  = ctx.get("brain", {})
 
     vix        = macro.get("vix", {}).get("value")
-    fg         = brain.get("fear_greed")
+    _eq_fg_raw = brain.get("equity_fear_greed")
+    if isinstance(_eq_fg_raw, dict) and _eq_fg_raw.get("value") is not None:
+        try:
+            from datetime import datetime, timezone
+            _eq_age = (datetime.now(timezone.utc) - datetime.fromisoformat(_eq_fg_raw["ts"]).replace(tzinfo=timezone.utc)).total_seconds()
+            fg = _eq_fg_raw["value"] if _eq_age < 7200 else 50
+        except Exception:
+            fg = 50
+    else:
+        fg = 50
     btc_signal = brain.get("btc_signal", "neutral")
     yield_10yr = macro.get("yield_10yr", {}).get("value")
     yield_2yr  = macro.get("yield_2yr",  {}).get("value")

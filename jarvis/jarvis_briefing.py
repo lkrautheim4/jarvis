@@ -22,7 +22,6 @@ import jarvis_brain as _jb_hb
 BOTS = {
     "jarvis_master":       "/root/jarvis/jarvis_master.py",
     "jarvis_stocks_v2":    "/root/jarvis/jarvis_stocks_v2.py",
-    "jarvis_options":      "/root/jarvis/jarvis_options.py",
     "jarvis_level5":       "/root/jarvis/jarvis_level5.py",
     "jarvis_intelligence": "/root/jarvis/jarvis_intelligence.py",
 }
