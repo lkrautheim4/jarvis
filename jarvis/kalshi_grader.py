@@ -113,22 +113,12 @@ def run_grader():
         SELECT id, ts, bet, yes_price, no_price, strike
         FROM kalshi_bets
         WHERE result IS NULL AND (market IS NULL OR market='')
-        AND ts >= date('now', '-2 days')
+        AND ts >= date('now', '-30 days')
     """)
     no_ticker = cur.fetchall()
     log.info(f"Ungraded bets without ticker: {len(no_ticker)}")
 
     conn.close()
-
-    # Propagate resolved outcomes to the parallel predictions rows so the
-    # morning brief's BTC-prediction WR reflects real betting performance.
-    try:
-        pred_graded = memdb.grade_predictions_from_kalshi()
-        if pred_graded:
-            log.info(f"Graded {pred_graded} predictions from kalshi outcomes")
-    except Exception as e:
-        log.error(f"Prediction grading error: {e}")
-
     log.info(f"Grading complete. Graded {graded} bets.")
     return graded
 
