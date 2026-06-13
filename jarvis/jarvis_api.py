@@ -353,7 +353,8 @@ Give Lenny a 2-sentence sharp morning brief and one specific action. No markdown
     return "All systems online. Ready for your command."
 
 if __name__ == "__main__":
-    print(f"JARVIS API v2 starting on port {PORT}...")
-    print(f"Live at http://68.183.107.46:{PORT}/status")
+    import sys
+    print(f"JARVIS API v2 starting on port {PORT}...", flush=True)
+    print(f"Live at http://68.183.107.46:{PORT}/status", flush=True)
     server = HTTPServer(('0.0.0.0', PORT), JarvisHandler)
     server.serve_forever()

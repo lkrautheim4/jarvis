@@ -83,7 +83,7 @@ HB_BOTS = {
 OUTPUT = {
     "jarvis_trump_monitor": ("db_trump",   None,                                        86400),
     "jarvis_master":        ("brain_key",  "btc_signal",                                  300),
-    "jarvis_api":           ("log_mtime",  f"{JARVIS_DIR}/jarvis_api.log",               3600),
+    "jarvis_api":           ("log_mtime",  f"{JARVIS_DIR}/jarvis_api.log",              86400),  # server: logs only on errors; liveness is the real check
     "jarvis_briefing":      ("log_mtime",  f"{JARVIS_DIR}/jarvis_briefing.log",          7200),
     "jarvis_intelligence":  ("db_intel",   None,                                         86400),
     "jarvis_options_brain": ("json_mtime", f"{JARVIS_DIR}/jarvis_options_brain.json",    3600),
@@ -91,10 +91,10 @@ OUTPUT = {
     "jarvis_beast":         ("log_mtime",  f"{JARVIS_DIR}/jarvis_beast.log",             3600),
     "jarvis_congress":      ("brain_key",  "congress_hot_tickers",                      86400),
     "jarvis_level5":        ("log_mtime",  f"{JARVIS_DIR}/jarvis_level5.log",            3600),
-    "jarvis_cascade":       ("brain_key",  "cascade_l0_fired",                           7200),  # market-hours bot
+    "jarvis_cascade":       ("brain_key",  "cascade_l0_fired",                          86400),  # event-driven (drawdown only)
     "lenny_predictions":    ("json_mtime", f"{JARVIS_DIR}/btc_memory.json",              7200),  # writes btc_memory.json, not DB
     "jarvis_futures":       ("brain_key",  "futures_best_signal",                       14400),
-    "lenny_trader_bot":     ("log_mtime",  f"{JARVIS_DIR}/lenny_trader_bot.log",         7200),  # market-hours bot
+    "lenny_trader_bot":     ("log_mtime",  f"{JARVIS_DIR}/lenny_trader_bot.log",        86400),  # command-driven: only logs on startup/command
     "jarvis_trader":        ("log_mtime",  f"{JARVIS_DIR}/jarvis_trader.log",            3600),
     "jarvis_premium":       ("log_mtime",  f"{JARVIS_DIR}/jarvis_premium.log",           3600),
     "options_grader":       ("log_mtime",  f"{JARVIS_DIR}/options_grader.log",           3600),
@@ -108,7 +108,7 @@ BRAIN_TTLS = {
     "btc_signal":           300,
     "btc_rsi":              300,
     "btc_macd":             300,
-    "market_mood":          300,
+    "market_mood":          3600,   # intelligence writes every 30min NEWS_POLL; 1h TTL
     "fear_greed":           3600,
     "equity_fear_greed":    3600,
     "macro_regime":         7200,
