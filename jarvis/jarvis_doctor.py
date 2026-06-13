@@ -87,7 +87,7 @@ OUTPUT = {
     "jarvis_briefing":      ("log_mtime",  f"{JARVIS_DIR}/jarvis_briefing.log",          7200),
     "jarvis_intelligence":  ("db_intel",   None,                                         86400),
     "jarvis_options_brain": ("json_mtime", f"{JARVIS_DIR}/jarvis_options_brain.json",    3600),
-    "jarvis_stocks_v2":     ("brain_key",  "hot_tickers",                                3600),
+    "jarvis_stocks_v2":     ("log_mtime",  f"{JARVIS_DIR}/jarvis_stocks_v2.log",          120),  # logs "Market closed" every 60s
     "jarvis_beast":         ("log_mtime",  f"{JARVIS_DIR}/jarvis_beast.log",             3600),
     "jarvis_congress":      ("brain_key",  "congress_hot_tickers",                      86400),
     "jarvis_level5":        ("log_mtime",  f"{JARVIS_DIR}/jarvis_level5.log",            3600),
