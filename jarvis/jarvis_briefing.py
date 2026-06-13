@@ -110,8 +110,8 @@ def run_ai_health_analysis():
     improvement_log = b.get("improvement_log", [])[-5:]
     kalshi_wr = b.get("kalshi_win_rate", 0)
     consec_losses = b.get("consecutive_losses", 0)
-    winning = b.get("winning_conditions", {})
-    losing  = b.get("losing_conditions", {})
+    # Pattern data (winning_conditions / losing_conditions) is frozen pending
+    # suspect-grade purge + rebuild confirmation — not passed to AI until cleared.
 
     # Build error summary
     error_summary = []
@@ -124,8 +124,6 @@ def run_ai_health_analysis():
 SYSTEM STATE:
 Kalshi win rate: {kalshi_wr}%
 Consecutive losses: {consec_losses}
-Winning patterns: {len(winning)} fingerprints
-Losing patterns: {len(losing)} fingerprints
 Recent errors: {chr(10).join(error_summary) if error_summary else 'None'}
 Recent improvements: {chr(10).join([i['change'] for i in improvement_log]) if improvement_log else 'None'}
 

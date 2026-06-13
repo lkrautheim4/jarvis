@@ -4,7 +4,7 @@ JARVIS CENTRAL BRAIN — Single source of truth for all bots
 Replaces jarvis_brain.py — drop-in compatible, adds cross-bot learning
 All bots read/write here. One brain. Everything learns from everything.
 """
-import json, os, time
+import json, os, time, sqlite3
 from datetime import datetime, timedelta
 
 BRAIN_FILE   = "/root/jarvis/jarvis_central_brain.json"
@@ -345,22 +345,54 @@ def get_unsent_news_for_briefing():
     return unsent[:10]
 
 # ── MORNING BRIEFING DATA ─────────────────────────────────────────────────────
+
+# Canonical 19-bot roster (jarvis_health + jarvis_watchdog are monitors, not included)
+_BOT_ROSTER = [
+    "jarvis_master", "jarvis_api", "jarvis_briefing", "jarvis_intelligence",
+    "jarvis_options_brain", "jarvis_stocks_v2", "jarvis_beast", "jarvis_congress",
+    "jarvis_level5", "jarvis_cascade", "jarvis_futures", "jarvis_premium",
+    "lenny_predictions", "lenny_trader_bot", "jarvis_trader", "jarvis_trump_monitor",
+    "options_grader", "kalshi_grader", "btc_ticker",
+]
+
+_DB_PATH = "/root/jarvis/jarvis_memory.db"
+_STALE_SECS = 600  # 10 min — matches jarvis_health RED threshold
+
+def _read_bot_heartbeats():
+    """Read bot_heartbeats from sqlite. Returns {bot_name: last_seen_str}."""
+    try:
+        con = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True, timeout=5)
+        rows = con.execute("SELECT bot_name, last_seen FROM bot_heartbeats").fetchall()
+        con.close()
+        return {name: ts for name, ts in rows}
+    except Exception:
+        return {}
+
+def _hb_age(ts_str):
+    """Age in seconds of a last_seen timestamp, or None if unparseable."""
+    if not ts_str:
+        return None
+    try:
+        ts = datetime.fromisoformat(ts_str)
+        return (datetime.now() - ts.replace(tzinfo=None)).total_seconds()
+    except Exception:
+        return None
+
 def build_briefing_data():
     """Compile everything for the morning briefing"""
     brain = read_brain()
     news = get_unsent_news_for_briefing()
-    status = brain.get("bot_status", {})
 
-    # Bot health summary
+    # Bot health — enumerate full 19-bot roster against bot_heartbeats
+    hb = _read_bot_heartbeats()
     bot_lines = []
-    for bot, data in status.items():
-        alive = data.get("alive", False)
-        errors = data.get("errors", 0)
-        last_error = data.get("last_error", "")
-        if not alive:
+    for bot in _BOT_ROSTER:
+        ts = hb.get(bot)
+        age = _hb_age(ts)
+        if age is None or age > _STALE_SECS:
             bot_lines.append(f"❌ {bot} — DOWN")
-        elif errors > 0:
-            bot_lines.append(f"⚠️ {bot} — {errors} errors: {last_error[:50]}")
+        elif age > 300:
+            bot_lines.append(f"⚠️ {bot} — {int(age//60)}m ago")
         else:
             bot_lines.append(f"✅ {bot}")
 
@@ -387,6 +419,24 @@ def build_briefing_data():
         except Exception:
             best_pattern = ""
 
+    # Equity F&G — read equity_fear_greed (CNN, written by jarvis_macro), not
+    # the crypto fear_greed field written by update_btc_state.  Guard 2h staleness.
+    eq_fg_data = brain.get("equity_fear_greed") or {}
+    eq_fg_val = eq_fg_data.get("value", 50)
+    eq_fg_ts  = eq_fg_data.get("ts", "")
+    if eq_fg_ts:
+        try:
+            age = (datetime.now() - datetime.fromisoformat(eq_fg_ts)).total_seconds()
+            if age > 7200:
+                eq_fg_val = 50
+        except Exception:
+            eq_fg_val = 50
+
+    # Equity split: baseline (paper start) → current → delta
+    _EQUITY_BASELINE = 100_000
+    equity_now   = brain.get("equity", 0)
+    equity_delta = round(equity_now - _EQUITY_BASELINE, 2)
+
     return {
         "btc_price":      brain.get("btc_price", 0),
         "btc_signal":     brain.get("btc_signal", "neutral"),
@@ -394,9 +444,11 @@ def build_briefing_data():
         "kalshi_pnl":     brain.get("kalshi_pnl", 0),
         "kalshi_bets":    brain.get("kalshi_total_bets", 0),
         "total_pnl":      brain.get("total_pnl", 0),
-        "equity":         brain.get("equity", 0),
+        "equity":         equity_now,
+        "equity_baseline": _EQUITY_BASELINE,
+        "equity_delta":   equity_delta,
         "risk_level":     brain.get("risk_level", "NORMAL"),
-        "fear_greed":     brain.get("fear_greed", 50),
+        "fear_greed":     eq_fg_val,
         "bot_health":     "\n".join(bot_lines),
         "news_summary":   "\n".join(news_lines) if news_lines else "No major news overnight",
         "best_pattern":   best_pattern,
@@ -421,10 +473,10 @@ def format_morning_briefing():
 Fear & Greed: {d['fear_greed']}/100 | Risk: {d['risk_level']}
 {'='*26}
 💰 PERFORMANCE
-Kalshi: {d['kalshi_wr']}% WR | {d['kalshi_bets']} bets | ${d['kalshi_pnl']:+.0f}
+Kalshi: {d['kalshi_wr']}% WR | {d['kalshi_bets']} bets | ${d['kalshi_pnl']:+.2f}
 Streak: {d['consec_wins']}W / {d['consec_losses']}L
+Equity: ${d['equity_baseline']:,.0f} → ${d['equity']:,.0f} ({d['equity_delta']:+,.0f})
 Total P&L: ${d['total_pnl']:+.0f}
-Equity: ${d['equity']:,.0f}
 {'='*26}
 🤖 BOT HEALTH
 {d['bot_health']}
