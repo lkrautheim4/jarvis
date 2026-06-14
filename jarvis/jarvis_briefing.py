@@ -20,10 +20,27 @@ import jarvis_central_brain as brain
 import jarvis_brain as _jb_hb
 
 BOTS = {
-    "jarvis_master":       "/root/jarvis/jarvis_master.py",
-    "jarvis_stocks_v2":    "/root/jarvis/jarvis_stocks_v2.py",
-    "jarvis_level5":       "/root/jarvis/jarvis_level5.py",
-    "jarvis_intelligence": "/root/jarvis/jarvis_intelligence.py",
+    "jarvis_master":        "/root/jarvis/jarvis_master.py",
+    "jarvis_api":           "/root/jarvis/jarvis_api.py",
+    "jarvis_briefing":      "/root/jarvis/jarvis_briefing.py",
+    "jarvis_intelligence":  "/root/jarvis/jarvis_intelligence.py",
+    "jarvis_options_brain": "/root/jarvis/jarvis_options_brain.py",
+    "jarvis_stocks_v2":     "/root/jarvis/jarvis_stocks_v2.py",
+    "jarvis_beast":         "/root/jarvis/jarvis_beast.py",
+    "jarvis_congress":      "/root/jarvis/jarvis_congress.py",
+    "jarvis_level5":        "/root/jarvis/jarvis_level5.py",
+    "jarvis_cascade":       "/root/jarvis/jarvis_cascade.py",
+    "jarvis_futures":       "/root/jarvis/jarvis_futures.py",
+    "jarvis_premium":       "/root/jarvis/jarvis_premium.py",
+    "lenny_predictions":    "/root/jarvis/lenny_predictions.py",
+    "lenny_trader_bot":     "/root/jarvis/lenny_trader_bot.py",
+    "jarvis_trader":        "/root/jarvis/jarvis_trader.py",
+    "jarvis_trump_monitor": "/root/jarvis/jarvis_trump_monitor.py",
+    "options_grader":       "/root/jarvis/options_grader.py",
+    "kalshi_grader":        "/root/jarvis/kalshi_grader.py",
+    "btc_ticker":           "/root/jarvis/btc_ticker.py",
+    "jarvis_health":        "/root/jarvis/jarvis_health.py",
+    "jarvis_trade_advisor": "/root/jarvis/jarvis_trade_advisor.py",
 }
 
 import logging
@@ -187,10 +204,10 @@ def main():
                 run_health_check()
                 last_health_check = time.time()
 
-            # Morning briefing at 7am EDT
+            # Morning briefing at 7am EDT — in-memory guard prevents duplicates within one run
             b = brain.read_brain()
             briefing_sent = b.get("briefing_sent_date", "")
-            if hour_edt == 7 and now.minute < 5 and briefing_sent != today:
+            if hour_edt == 7 and now.minute < 5 and briefing_sent != today and last_briefing_date != today:
                 send_morning_briefing()
                 last_briefing_date = today
 

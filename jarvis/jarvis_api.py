@@ -26,12 +26,27 @@ FILES = {
 }
 
 LOGS = {
-    "jarvis_master":       "/root/jarvis/jarvis_master.log",
-    "jarvis_stocks_v2":    "/root/jarvis/jarvis_stocks_v2.log",
-    "jarvis_options":      "/root/jarvis/jarvis_options.log",
-    "jarvis_level5":       "/root/jarvis/jarvis_level5.log",
-    "jarvis_briefing":     "/root/jarvis/jarvis_briefing.log",
-    "jarvis_intelligence": "/root/jarvis/jarvis_intelligence.log",
+    "jarvis_master":         "/root/jarvis/jarvis_master.log",
+    "jarvis_api":            "/root/jarvis/jarvis_api.log",
+    "jarvis_briefing":       "/root/jarvis/jarvis_briefing.log",
+    "jarvis_intelligence":   "/root/jarvis/jarvis_intelligence.log",
+    "jarvis_options_brain":  "/root/jarvis/jarvis_options_brain.log",
+    "jarvis_stocks_v2":      "/root/jarvis/jarvis_stocks_v2.log",
+    "jarvis_beast":          "/root/jarvis/jarvis_beast.log",
+    "jarvis_congress":       "/root/jarvis/jarvis_congress.log",
+    "jarvis_level5":         "/root/jarvis/jarvis_level5.log",
+    "jarvis_cascade":        "/root/jarvis/jarvis_cascade.log",
+    "jarvis_futures":        "/root/jarvis/jarvis_futures.log",
+    "jarvis_premium":        "/root/jarvis/jarvis_premium.log",
+    "lenny_predictions":     "/root/jarvis/lenny_predictions.log",
+    "lenny_trader_bot":      "/root/jarvis/lenny_trader_bot.log",
+    "jarvis_trader":         "/root/jarvis/jarvis_trader.log",
+    "jarvis_trump_monitor":  "/root/jarvis/jarvis_trump_monitor.log",
+    "options_grader":        "/root/jarvis/options_grader.log",
+    "kalshi_grader":         "/root/jarvis/kalshi_grader.log",
+    "btc_ticker":            "/root/jarvis/jarvis_btc.log",
+    "jarvis_health":         "/root/jarvis/jarvis_health.log",
+    "jarvis_trade_advisor":  "/root/jarvis/jarvis_trade_advisor.log",
 }
 
 def load(path):
@@ -54,16 +69,14 @@ def get_bot_status():
                 capture_output=True, text=True)
             process_alive = result.returncode == 0
 
-            # Check log freshness
+            # Check log freshness (advisory — alive is determined by process, not log age)
             if os.path.exists(log):
                 mtime = os.path.getmtime(log)
                 age_mins = round((time.time() - mtime) / 60, 1)
-                alive = age_mins < 10 and process_alive
                 with open(log) as f:
                     lines = [l.strip() for l in f.readlines() if l.strip()]
                     last_log = lines[-1][:100] if lines else ""
-            else:
-                alive = process_alive
+            alive = process_alive  # process check is the authoritative alive signal
 
             bots.append({
                 "name": name,
@@ -78,17 +91,28 @@ def get_bot_status():
     return bots
 
 def get_live_btc():
+    # Coinbase spot (Binance.us geo-blocked HTTP 451 on this server)
     try:
-        r = requests.get("https://api.binance.us/api/v3/ticker/24hr",
-            params={"symbol": "BTCUSDT"}, timeout=5)
-        d = r.json()
-        return {
-            "price":   round(float(d["lastPrice"]), 2),
-            "chg24h":  round(float(d["priceChangePercent"]), 2),
-            "high":    round(float(d["highPrice"]), 2),
-            "low":     round(float(d["lowPrice"]), 2),
-            "volume":  round(float(d["volume"]), 2),
-        }
+        r = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=5)
+        if r.status_code == 200:
+            price = float(r.json()["data"]["amount"])
+            # 24h stats from Kraken (Coinbase spot has no 24h endpoint)
+            try:
+                rk = requests.get("https://api.kraken.com/0/public/Ticker",
+                    params={"pair": "XBTUSDT"}, timeout=5)
+                if rk.status_code == 200:
+                    tk = rk.json()["result"]
+                    pair = list(tk.keys())[0]
+                    d = tk[pair]
+                    return {
+                        "price":  price,
+                        "chg24h": round((price - float(d["o"])) / float(d["o"]) * 100, 2),
+                        "high":   round(float(d["h"][1]), 2),
+                        "low":    round(float(d["l"][1]), 2),
+                        "volume": round(float(d["v"][1]), 2),
+                    }
+            except: pass
+            return {"price": price, "chg24h": 0}
     except: pass
     # Fallback to central brain
     cb = load(FILES["central_brain"])

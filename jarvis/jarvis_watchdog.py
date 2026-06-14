@@ -40,6 +40,7 @@ BOTS = [
     {"name": "options_grader",       "file": "options_grader.py",       "flag": "-B", "critical": False},
     {"name": "btc_ticker",           "file": "btc_ticker.py",           "flag": "",   "critical": False},
     {"name": "jarvis_health",        "file": "jarvis_health.py",        "flag": "",   "critical": False},
+    {"name": "jarvis_trade_advisor", "file": "jarvis_trade_advisor.py", "flag": "",   "critical": False},
 ]
 
 # Heartbeat timeout — bot considered dead if no heartbeat in N seconds

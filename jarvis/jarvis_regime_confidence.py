@@ -57,7 +57,7 @@ def vote_from_vix(vix):
     if vix is None: return None, 0
     if vix < 13:   return "RISK_ON",     1.0
     if vix < 17:   return "RISK_ON",     0.7
-    if vix < 20:   return "STAGFLATION", 0.6
+    if vix < 20:   return "RISK_ON",     0.5   # low VIX = low fear = risk-on, not stagflation
     if vix < 25:   return "STAGFLATION", 0.5
     if vix < 30:   return "RISK_OFF",    0.7
     return               "RISK_OFF",     1.0

@@ -48,6 +48,7 @@ declare -a BOTS=(
   "kalshi_grader.py|kalshi_grader|-B"
   "btc_ticker.py|jarvis_btc|"
   "jarvis_health.py|jarvis_health|"
+  "jarvis_trade_advisor.py|jarvis_trade_advisor|"
   "jarvis_watchdog.py|jarvis_watchdog|-B"
 )
 

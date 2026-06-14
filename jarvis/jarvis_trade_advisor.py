@@ -4,13 +4,14 @@ JARVIS Trade Advisor Bot
 Telegram /ask command -> Claude API -> reply + log to jarvis_memory.db
 """
 
+import os
 import re
 import sqlite3
 import logging
 import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import jarvis_secrets
+from jarvis_secrets import TG_TOKEN_ADVISOR as TELEGRAM_TOKEN, CLAUDE_API_KEY as ANTHROPIC_KEY
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,9 +21,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_TRADER
-CHAT_ID        = 7534553840
-ANTHROPIC_KEY  = jarvis_secrets.CLAUDE_API_KEY
+CHAT_ID = 7534553840
 DB_PATH        = "/root/jarvis/jarvis_memory.db"
 EDT            = ZoneInfo("America/New_York")
 BOT_NAME       = "jarvis_trade_advisor"
@@ -78,8 +77,8 @@ def inject_heartbeat():
     ts = datetime.now(EDT).isoformat()
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
-        "INSERT OR REPLACE INTO bot_heartbeats (bot_name, last_seen, status) VALUES (?,?,?)",
-        (BOT_NAME, ts, "running")
+        "INSERT OR REPLACE INTO bot_heartbeats (bot_name, last_seen, pid, alive) VALUES (?,?,?,1)",
+        (BOT_NAME, ts, os.getpid())
     )
     conn.commit()
     conn.close()

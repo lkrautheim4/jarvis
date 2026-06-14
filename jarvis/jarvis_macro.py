@@ -575,8 +575,9 @@ def run_cycle():
                 "yield_10yr": yield_data,
             },
             "brain": {
-                "fear_greed": fg.get("current", 50),
-                "btc_signal": btc_signal,
+                "fear_greed":        fg.get("current", 50),
+                "btc_signal":        btc_signal,
+                "equity_fear_greed": eq_fg,   # CNN equity F&G dict {value, ts} for correct regime vote
             },
         }, brain_file=BRAIN_FILE)
     except Exception as _ce:
