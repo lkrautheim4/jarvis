@@ -146,6 +146,11 @@ def _parse_iso(s):
     if not s:
         return None
     s = s.strip()
+    # Strip timezone suffix (+00:00 / Z) before trying format list
+    if s.endswith("Z"):
+        s = s[:-1]
+    elif len(s) > 6 and s[-6] in ("+", "-"):
+        s = s[:-6]
     for fmt in (
         "%Y-%m-%dT%H:%M:%S.%f",
         "%Y-%m-%dT%H:%M:%S",
@@ -416,15 +421,12 @@ def section2(conn):
     count_check(
         "kalshi_brain.json[bets]  vs  kalshi_bets DB",
         len(kb.get("bets", [])),
-        conn.execute("SELECT COUNT(*) FROM kalshi_bets").fetchone()[0],
+        # Exclude ISO-ts rows written by jarvis_memory_db (kalshi oracle — separate system)
+        conn.execute("SELECT COUNT(*) FROM kalshi_bets WHERE ts NOT LIKE '%T%'").fetchone()[0],
     )
 
-    om = _load_json(f"{JARVIS_DIR}/options_memory.json") or {}
-    count_check(
-        "options_memory.json[trades]  vs  options_trades DB",
-        len(om.get("trades", [])),
-        conn.execute("SELECT COUNT(*) FROM options_trades").fetchone()[0],
-    )
+    # options_memory.json (jarvis_capital) and options_trades DB (webull/jarvis_options_v2)
+    # are different systems — no cross-check needed
 
     cb = _load_json(f"{JARVIS_DIR}/jarvis_central_brain.json") or {}
     count_check(
