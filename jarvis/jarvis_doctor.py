@@ -50,6 +50,9 @@ BOTS = [
     {"name": "options_grader",       "file": "options_grader.py",       "critical": False},
     {"name": "btc_ticker",           "file": "btc_ticker.py",           "critical": False},
     {"name": "jarvis_health",        "file": "jarvis_health.py",        "critical": False},
+    {"name": "kalshi_grader",        "file": "kalshi_grader.py",        "critical": False},
+    {"name": "jarvis_trade_advisor", "file": "jarvis_trade_advisor.py", "critical": False},
+    {"name": "jarvis_watchdog",      "file": "jarvis_watchdog.py",      "critical": False},
 ]
 
 # Per-bot heartbeat timeout (seconds).  Exceeding this → stale_hb.
@@ -100,6 +103,9 @@ OUTPUT = {
     "options_grader":       ("log_mtime",  f"{JARVIS_DIR}/options_grader.log",           3600),
     "btc_ticker":           ("log_mtime",  f"{JARVIS_DIR}/jarvis_btc.log",              4200),  # hourly bot; log up to 60min old
     "jarvis_health":        ("log_mtime",  f"{JARVIS_DIR}/jarvis_health.log",          25200),  # 6h cron; allow 7h TTL
+    "kalshi_grader":        ("log_mtime",  f"{JARVIS_DIR}/kalshi_grader.log",           1800),  # runs every 15 min
+    "jarvis_trade_advisor": ("log_mtime",  f"{JARVIS_DIR}/jarvis_trade_advisor.log",   90000),  # command-driven; logs on startup/command only
+    "jarvis_watchdog":      ("log_mtime",  f"{JARVIS_DIR}/jarvis_watchdog.log",         3600),
 }
 
 # Brain key TTLs (seconds).  Keys not listed default to BRAIN_TTL_DEFAULT.
@@ -308,7 +314,7 @@ def _load_json(path):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def section1(conn):
-    _section("SECTION 1 — Bot Health  (19 bots × 3 independent checks)")
+    _section(f"SECTION 1 — Bot Health  ({len(BOTS)} bots × 3 independent checks)")
 
     running = _get_running_scripts()
     hb_rows = conn.execute("SELECT bot_name, last_seen FROM bot_heartbeats").fetchall()
@@ -391,7 +397,7 @@ def section1(conn):
 
     print()
     if not failures:
-        print(_ok("All 19 bots GREEN"))
+        print(_ok(f"All {len(BOTS)} bots GREEN"))
     else:
         for name, checks in failures:
             print(_bad(f"{name}: {', '.join(checks)}"))

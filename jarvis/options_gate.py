@@ -18,7 +18,7 @@ def gate_signal(sig):
     iv_ratio, cash_required, account_value, week_change_pct"""
     reasons = []
 
-    age = time.time() - sig["quote_ts"]
+    age = time.time() - sig.get("quote_ts", time.time())
     if age > MAX_QUOTE_AGE_SEC:
         reasons.append(f"STALE QUOTE: {age/60:.0f} min old")
 
@@ -27,10 +27,18 @@ def gate_signal(sig):
         reasons.append(f"MODE VIOLATION: {sig['strategy']} blocked in PROTECTION")
 
     if sig["strategy"] in SHORT_PREMIUM_STRATEGIES and sig.get("iv_ratio", 0) < 130:
-        reasons.append(f"IV RATIO {sig.get('iv_ratio')} < 130 - no premium-selling edge")
+        reasons.append(f"IV RATIO {sig.get('iv_ratio',0):.0f} < 130 — no premium-selling edge")
 
+    # Don't buy premium (calls or puts) when IV is already deflated — poor reward/risk
+    BUY_STRATEGIES = {"BUY_CALL", "call_buy", "BUY_PUT", "put_buy"}
+    if sig["strategy"] in BUY_STRATEGIES and sig.get("iv_ratio", 0) > 0 and sig.get("iv_ratio", 0) < 70:
+        reasons.append(f"IV RATIO {sig.get('iv_ratio',0):.0f} < 70 — IV too deflated to buy premium")
+
+    # Falling knife: block put-selling AND call-buying on stocks down hard on the week
     if sig["strategy"] in {"SELL_PUT", "CSP"} and sig.get("week_change_pct", 0) <= -5:
-        reasons.append(f"DOWNTREND: {sig['week_change_pct']}% on week - falling knife")
+        reasons.append(f"DOWNTREND: {sig['week_change_pct']}% on week — falling knife, no put-selling")
+    if sig["strategy"] in {"BUY_CALL", "call_buy"} and sig.get("week_change_pct", 0) <= -5:
+        reasons.append(f"DOWNTREND: {sig['week_change_pct']}% on week — no call-buying into weakness")
 
     if sig.get("cash_required", 0) > sig.get("account_value", 0) * MAX_CASH_PCT:
         reasons.append(f"OVERSIZED: ${sig.get('cash_required',0):,} > {MAX_CASH_PCT:.0%} of account")

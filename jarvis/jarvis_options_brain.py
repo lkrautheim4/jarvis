@@ -1029,8 +1029,8 @@ def scan_and_alert(brain, ctx):
                     log.info(f"SKIP {ticker}: IV too high (rank {_ivr:.0f}) — sell-premium candidate")
                     continue
             score, signals = score_setup(ticker, price, iv, opt_type, ctx, config)
-            # Lower threshold for put_buy in RISK_OFF
-            threshold = 40 if (opt_type == "put_buy" and regime == "RISK_OFF") else 60
+            # Slightly lower threshold for put_buy in RISK_OFF (bearish hedge) but not so low it floods
+            threshold = 55 if (opt_type == "put_buy" and regime == "RISK_OFF") else 60
             if score < threshold:
                 log.info(f"SKIP {ticker}: no signal (score {score} < {threshold})")
                 continue
@@ -1051,10 +1051,11 @@ def scan_and_alert(brain, ctx):
                 log.info(f"SKIP: strike too far OTM — {ticker} ${strike:.0f} vs spot ${price:.2f}")
                 continue
 
-            # (#2) IV Rank — don't BUY premium when implied vol is already rich.
-            iv_rank = None
+            # (#2) IV Rank — compute for all strategies so gate has the value.
+            # For buy strategies: skip if IV already too rich (> MAX_IV_RANK).
+            # For sell strategies: iv_rank is passed to gate to confirm edge >= 130.
+            iv_rank = get_iv_rank(ticker, iv)
             if opt_type in ("call_buy", "put_buy"):
-                iv_rank = get_iv_rank(ticker, iv)
                 if iv_rank is not None and iv_rank > MAX_IV_RANK:
                     log.info(f"SKIP: IV Rank {iv_rank:.0f} — too expensive to buy ({ticker} {opt_type})")
                     continue
@@ -1082,7 +1083,8 @@ def scan_and_alert(brain, ctx):
                 "config": config,
                 "quote_ts": contract.get("quote_ts", 0),
                 "week_change_pct": contract.get("week_change_pct", 0),
-                "iv_ratio": iv_rank if iv_rank is not None else 0
+                "iv_ratio": iv_rank if iv_rank is not None else 0,
+                "quote_ts": contract.get("quote_ts", time.time()),
             })
 
     top_setups.sort(key=lambda x: x["score"], reverse=True)
@@ -1104,6 +1106,8 @@ def scan_and_alert(brain, ctx):
                 "strategy": setup.get("strategy", "SELL_PUT"),
                 "ticker": setup.get("ticker", ""),
                 "quote_price": setup.get("price", 0),
+                "quote_ts": setup.get("quote_ts", time.time()),
+                "iv_ratio": setup.get("iv_ratio", 0),
                 "cash_required": setup.get("premium", 0) * 100,
                 "account_value": 94000,
                 "week_change_pct": setup.get("week_change_pct", 0),

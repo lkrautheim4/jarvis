@@ -438,7 +438,9 @@ def run_scan(brain):
             log.info("RISK_OFF regime — no new stock trades")
             return
         log.info(f"Macro: {macro_regime} size_mult:{macro_mult}x")
-    except: pass
+    except:
+        macro_mult = 0.5  # fail-safe: half-size if macro system is unavailable
+        log.warning("Macro file unavailable — defaulting to 0.5x sizing")
 
     open_positions = get_positions()
     stock_positions = [p for p in open_positions if "USD" not in p.get("symbol","") and len(p.get("symbol","")) <= 6]
