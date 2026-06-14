@@ -378,23 +378,50 @@ def _hb_age(ts_str):
     except Exception:
         return None
 
+def _proc_alive(filename: str) -> bool:
+    """True if a python process argv includes this script filename."""
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as fh:
+                    argv = [a for a in fh.read().decode("utf-8", "replace").split("\0") if a]
+            except Exception:
+                continue
+            if not argv or not os.path.basename(argv[0]).startswith("python"):
+                continue
+            if any(os.path.basename(a) == filename for a in argv[1:]):
+                return True
+    except Exception:
+        pass
+    return False
+
 def build_briefing_data():
     """Compile everything for the morning briefing"""
     brain = read_brain()
     news = get_unsent_news_for_briefing()
 
-    # Bot health — enumerate full 19-bot roster against bot_heartbeats
+    # Bot health — heartbeat first, fall back to live /proc check for bots that
+    # don't write heartbeats (jarvis_api, jarvis_trader, options_grader, etc.)
     hb = _read_bot_heartbeats()
     bot_lines = []
     for bot in _BOT_ROSTER:
         ts = hb.get(bot)
         age = _hb_age(ts)
-        if age is None or age > _STALE_SECS:
-            bot_lines.append(f"❌ {bot} — DOWN")
-        elif age > 300:
-            bot_lines.append(f"⚠️ {bot} — {int(age//60)}m ago")
+        if age is not None and age <= _STALE_SECS:
+            # Fresh heartbeat
+            if age > 300:
+                bot_lines.append(f"⚠️ {bot} — {int(age//60)}m ago")
+            else:
+                bot_lines.append(f"✅ {bot}")
         else:
-            bot_lines.append(f"✅ {bot}")
+            # No heartbeat or stale — fall back to live process check
+            fname = bot + ".py"
+            if _proc_alive(fname):
+                bot_lines.append(f"✅ {bot}")
+            else:
+                bot_lines.append(f"❌ {bot} — DOWN")
 
     # News summary
     news_lines = []
