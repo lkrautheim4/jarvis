@@ -44,6 +44,18 @@ BOTS = {
 }
 
 import logging
+
+def get_kalshi_stats():
+    import sqlite3
+    conn = sqlite3.connect('/root/jarvis/jarvis_memory.db')
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as total, SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) as wins FROM kalshi_bets WHERE result IS NOT NULL")
+    row = cur.fetchone()
+    conn.close()
+    total, wins = row[0], row[1] or 0
+    wr = round(100 * wins / total, 1) if total > 0 else 0
+    return total, wins, wr
+
 logging.basicConfig(level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
 log = logging.getLogger("JARVIS-BRIEFING")

@@ -397,6 +397,28 @@ def _proc_alive(filename: str) -> bool:
         pass
     return False
 
+def _kalshi_stats_from_db():
+    """Live Kalshi stats from DB — bypasses stale brain JSON values."""
+    try:
+        import sqlite3
+        conn = sqlite3.connect('/root/jarvis/jarvis_memory.db')
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                SUM(CASE WHEN result='WIN'  THEN 1 ELSE 0 END),
+                SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN result IN ('WIN','LOSS') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN result IN ('WIN','LOSS') THEN COALESCE(pnl,0) ELSE 0 END)
+            FROM kalshi_bets WHERE result IS NOT NULL
+        """)
+        wins, losses, graded, pnl = cur.fetchone()
+        conn.close()
+        wins, losses, graded = (wins or 0), (losses or 0), (graded or 0)
+        wr = round(100 * wins / graded, 1) if graded > 0 else 0.0
+        return graded, wr, round(pnl or 0.0, 2)
+    except Exception:
+        return None, None, None
+
 def build_briefing_data():
     """Compile everything for the morning briefing"""
     brain = read_brain()
@@ -464,12 +486,19 @@ def build_briefing_data():
     equity_now   = brain.get("equity", 0)
     equity_delta = round(equity_now - _EQUITY_BASELINE, 2)
 
+    # Kalshi stats — live DB query, fall back to brain JSON if DB unavailable
+    _k_graded, _k_wr, _k_pnl = _kalshi_stats_from_db()
+    if _k_graded is None:
+        _k_graded = brain.get("kalshi_total_bets", 0)
+        _k_wr     = brain.get("kalshi_win_rate", 0)
+        _k_pnl    = brain.get("kalshi_pnl", 0)
+
     return {
         "btc_price":      brain.get("btc_price", 0),
         "btc_signal":     brain.get("btc_signal", "neutral"),
-        "kalshi_wr":      brain.get("kalshi_win_rate", 0),
-        "kalshi_pnl":     brain.get("kalshi_pnl", 0),
-        "kalshi_bets":    brain.get("kalshi_total_bets", 0),
+        "kalshi_wr":      _k_wr,
+        "kalshi_pnl":     _k_pnl,
+        "kalshi_bets":    _k_graded,
         "total_pnl":      brain.get("total_pnl", 0),
         "equity":         equity_now,
         "equity_baseline": _EQUITY_BASELINE,
