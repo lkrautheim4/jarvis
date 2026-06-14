@@ -286,6 +286,15 @@ def morning_report():
     tg("\n".join(lines))
     log.info(f"Morning report sent: {len(opens)} open, P&L ${total_pnl:+.0f}")
 
+def log_event(bot, event, sym=None, dec=None, reason=None):
+    import sqlite3
+    from datetime import datetime
+    conn = sqlite3.connect('jarvis_memory.db')
+    cur = conn.cursor()
+    cur.execute("INSERT INTO bot_events (ts, bot_name, event_type, symbol, decision, reason) VALUES (?,?,?,?,?,?)", (datetime.now().isoformat(), bot, event, sym, dec, reason))
+    conn.commit()
+    conn.close()
+
 def main():
     log.info("OPTIONS GRADER ONLINE — checking every 5 minutes during market hours")
     tg("📊 OPTIONS PAPER GRADER ONLINE\nMonitoring open trades\nExit rules: +50% profit, -50% stop, 2 DTE close")

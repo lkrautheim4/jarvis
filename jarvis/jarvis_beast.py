@@ -3,6 +3,7 @@
 THE BEAST — Jarvis Alpha Stock Trading Engine
 Combines: Technical momentum + Congress trades + Insider buying + 
           Sector rotation + BTC sentiment + Options flow + Claude AI
+from jarvis_context import get_context
 Runs every 5 minutes during market hours. Paper trades on Alpaca.
 """
 import requests, json, os, time, logging, math
