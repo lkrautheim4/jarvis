@@ -419,6 +419,23 @@ def _kalshi_stats_from_db():
     except Exception:
         return None, None, None
 
+
+def get_kalshi_live_stats():
+    """Query live Kalshi stats from database"""
+    try:
+        import sqlite3
+        conn = sqlite3.connect(os.path.join(JARVIS_DIR, 'jarvis_memory.db'))
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*), SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END), SUM(pnl) FROM kalshi_bets WHERE result IS NOT NULL")
+        total, wins, pnl_sum = cur.fetchone()
+        conn.close()
+        wins = wins or 0
+        wr = round(100 * wins / total, 1) if total > 0 else 0
+        pnl = round(pnl_sum or 0, 2)
+        return wr, total, pnl
+    except:
+        return 0, 0, 0
+
 def build_briefing_data():
     """Compile everything for the morning briefing"""
     brain = read_brain()
