@@ -210,6 +210,7 @@ def main():
     brain = load_brain()
     tg_offset = None
     last_check = 0
+    last_idle_log = 0
 
     while True:
         try:
@@ -239,6 +240,10 @@ def main():
                     tg("Total predictions: " + str(brain["total"]) + "\nCorrect: " + str(brain["correct"]) + "\nAccuracy: " + str(acc) + "%")
                 elif text == "HELP":
                     tg("BTC <target> <low> <high>\nETH <target> <low> <high>\nSTATUS")
+
+            if time.time() - last_idle_log >= 3600:
+                log.info("Idle — waiting for Telegram commands")
+                last_idle_log = time.time()
 
             jarvis_brain.update_bot_heartbeat("lenny_trader_bot")
             time.sleep(10)

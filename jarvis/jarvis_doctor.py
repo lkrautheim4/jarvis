@@ -59,8 +59,8 @@ HB_TIMEOUT = {
     "jarvis_intelligence":  21600,  # 4-hour INTERVAL
     "jarvis_options_brain": 600,
     "jarvis_stocks_v2":     300,
-    "jarvis_beast":         600,
-    "jarvis_congress":      600,
+    "jarvis_beast":         2100,   # 30-min sleep during RISK_OFF + buffer
+    "jarvis_congress":      15600,  # 4-hour INTERVAL + buffer
     "jarvis_level5":        600,
     "jarvis_cascade":       600,
     "lenny_predictions":    300,
@@ -81,7 +81,7 @@ HB_BOTS = {
 # Correction (3): market-hours-active bots (cascade, lenny_trader_bot) use 7200s
 # (2h) so silence during an active session surfaces as STALE, not hidden behind 24h.
 OUTPUT = {
-    "jarvis_trump_monitor": ("db_trump",   None,                                        86400),
+    "jarvis_trump_monitor": ("log_mtime",  f"{JARVIS_DIR}/jarvis_trump_monitor.log",      600),  # logs every poll; db_trump stale when no signals (expected)
     "jarvis_master":        ("brain_key",  "btc_signal",                                  300),
     "jarvis_api":           ("log_mtime",  f"{JARVIS_DIR}/jarvis_api.log",              86400),  # server: logs only on errors; liveness is the real check
     "jarvis_briefing":      ("log_mtime",  f"{JARVIS_DIR}/jarvis_briefing.log",          7200),
@@ -89,12 +89,12 @@ OUTPUT = {
     "jarvis_options_brain": ("json_mtime", f"{JARVIS_DIR}/jarvis_options_brain.json",    3600),
     "jarvis_stocks_v2":     ("log_mtime",  f"{JARVIS_DIR}/jarvis_stocks_v2.log",          120),  # logs "Market closed" every 60s
     "jarvis_beast":         ("log_mtime",  f"{JARVIS_DIR}/jarvis_beast.log",             3600),
-    "jarvis_congress":      ("brain_key",  "congress_hot_tickers",                      86400),
+    "jarvis_congress":      ("log_mtime",  f"{JARVIS_DIR}/jarvis_congress.log",          18000),  # 4-hour INTERVAL + buffer; brain_key stale when Capitol Trades is 429
     "jarvis_level5":        ("log_mtime",  f"{JARVIS_DIR}/jarvis_level5.log",            3600),
     "jarvis_cascade":       ("brain_key",  "cascade_l0_fired",                          86400),  # event-driven (drawdown only)
     "lenny_predictions":    ("json_mtime", f"{JARVIS_DIR}/btc_memory.json",              7200),  # writes btc_memory.json, not DB
     "jarvis_futures":       ("brain_key",  "futures_best_signal",                       14400),
-    "lenny_trader_bot":     ("log_mtime",  f"{JARVIS_DIR}/lenny_trader_bot.log",        86400),  # command-driven: only logs on startup/command
+    "lenny_trader_bot":     ("log_mtime",  f"{JARVIS_DIR}/lenny_trader_bot.log",        90000),  # command-driven: logs hourly-idle after restart; 25h covers first idle log
     "jarvis_trader":        ("log_mtime",  f"{JARVIS_DIR}/jarvis_trader.log",            3600),
     "jarvis_premium":       ("log_mtime",  f"{JARVIS_DIR}/jarvis_premium.log",           3600),
     "options_grader":       ("log_mtime",  f"{JARVIS_DIR}/options_grader.log",           3600),
@@ -624,10 +624,15 @@ def section4(conn):
             f"kalshi_grader: NEVER GRADED — {total_bets} bets total, "
             f"{ungraded} ungraded"
         ))
-    elif graded_age > 86400:
+    elif graded_age > 86400 and ungraded > 0:
         print(_bad(
             f"kalshi_grader: FROZEN-as-of {_fmt_et(last_graded_dt)}  "
             f"({_fmt_age(graded_age)} ago)  {ungraded}/{total_bets} ungraded"
+        ))
+    elif graded_age > 86400:
+        print(_ok(
+            f"kalshi_grader: idle — last graded {_fmt_age(graded_age)} ago  "
+            f"0/{total_bets} ungraded (nothing to grade)"
         ))
     elif graded_age > 3600:
         print(_warn(
@@ -690,14 +695,14 @@ def section4(conn):
             f"last={_fmt_et(_parse_iso(last))}"
         ))
 
-    return graded_age
+    return graded_age, ungraded
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 5 — SAFE-TO-REARM VERDICT
 # ═════════════════════════════════════════════════════════════════════════════
 
-def section5(bot_failures, brain_stale, grader_age):
+def section5(bot_failures, brain_stale, grader_info):
     _section("SECTION 5 — Safe-to-Rearm Verdict")
 
     unsafe = []
@@ -713,10 +718,13 @@ def section5(bot_failures, brain_stale, grader_age):
         if name in critical_names and any("stale_hb" in c for c in checks):
             unsafe.append(f"critical bot stale heartbeat: {name}")
 
-    # kalshi_grader not grading recently (>24h = win-rate / P&L are FROZEN)
-    if grader_age is None or grader_age > 86400:
-        age_str = _fmt_age(grader_age) if grader_age is not None else "never"
-        unsafe.append(f"kalshi_grader last graded {age_str} ago (>24h — stats frozen)")
+    # kalshi_grader frozen: only unsafe if there are ungraded bets sitting >24h
+    grader_age, grader_ungraded = grader_info if isinstance(grader_info, tuple) else (grader_info, 0)
+    if grader_age is None:
+        unsafe.append("kalshi_grader has never graded any bets")
+    elif grader_age > 86400 and grader_ungraded > 0:
+        age_str = _fmt_age(grader_age)
+        unsafe.append(f"kalshi_grader last graded {age_str} ago (>24h — stats frozen, {grader_ungraded} ungraded)")
 
     # Short-TTL brain keys that are >2× stale gate active trading decisions
     short_stale = [k for k in brain_stale if BRAIN_TTLS.get(k, BRAIN_TTL_DEFAULT) <= 3600]
@@ -747,8 +755,8 @@ def main():
         bot_failures = section1(conn)
         section2(conn)
         brain_stale  = section3(conn)
-        grader_age   = section4(conn)
-        safe         = section5(bot_failures, brain_stale, grader_age)
+        grader_info  = section4(conn)
+        safe         = section5(bot_failures, brain_stale, grader_info)
     finally:
         conn.close()
 
