@@ -198,6 +198,9 @@ def run_cycle():
     log.info(f"Capital report: Kalshi ${pnl_data['kalshi']['pnl']:+.0f} "
              f"Beast ${pnl_data['beast']['pnl']:+.0f} "
              f"Total ${capital['total_pnl']:+.0f}")
+
+    msg = format_capital_report(pnl_data, allocations)
+    tg(msg)
     return pnl_data, allocations
 
 def main():
