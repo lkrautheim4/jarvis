@@ -25,6 +25,11 @@ DB_PATH         = "/root/jarvis/jarvis_memory.db"
 SYMBOL          = "BTC"
 CHECK_INTERVAL  = 3600          # 1 hour
 WATCH_FILE      = "/root/jarvis/lenny_watch.json"   # this bot's own WATCH store
+
+# ── Edge-gate thresholds (tune here, nowhere else) ────────────────────────────
+EDGE_THRESHOLD    = 0.08   # min model-vs-market edge to place any bet
+NEAR_CERTAIN      = 0.90   # market priced this confident (either side) triggers stricter gate
+NEAR_CERTAIN_EDGE = 0.15   # edge required when market is near-certain (kills penny-edge bets)
 WATCH_TTL       = 7200          # a watch anchors for 2h, then expires
 
 def make_targets(price: float, watch_price: float | None = None) -> list:
@@ -289,7 +294,7 @@ def _log_kalshi_pred(symbol: str, ts: str, target: float, bet: str,
         return None
 
 
-# ── Confidence gate ───────────────────────────────────────────────────────────
+# ── Edge gate ─────────────────────────────────────────────────────────────────
 def _parse_pct(s) -> float | None:
     """Numeric percent (0-100) from strings like '71%', '71', '71.5%'. None if not parseable (e.g. '?')."""
     try:
@@ -298,19 +303,27 @@ def _parse_pct(s) -> float | None:
         return None
 
 
-def _gate_bet(bet: str, target_prob_str: str) -> str:
-    """Hard confidence floor — OVERRIDES Claude's recommendation.
-    target_prob = Claude's confidence the price HITS the target. Directional confidence:
-      YES wins if it hits   → conf = target_prob        → require >= 65%
-      NO  wins if it misses → conf = 100 - target_prob  → require >= 80%
-    Anything below the floor (or an unparseable confidence) is forced to SKIP."""
-    conf = _parse_pct(target_prob_str)
-    if bet == "YES":
-        return "YES" if (conf is not None and conf >= 65) else "SKIP"
-    if bet == "NO":
-        no_conf = None if conf is None else 100 - conf
-        return "NO" if (no_conf is not None and no_conf >= 80) else "SKIP"
-    return "SKIP"
+def _edge_gate(target_prob_str: str, yes_price: float) -> tuple[str, float]:
+    """Bet only when the model DISAGREES with the Kalshi market price by a profitable margin.
+    edge = model_prob - kalshi_yes_price
+      edge >  threshold → YES  (model thinks YES is underpriced)
+      edge < -threshold → NO   (model thinks YES is overpriced)
+      else              → SKIP (no edge, no bet)
+    Near-certain markets (yes_price ≥ 0.90 or ≤ 0.10) require a higher edge
+    to prevent penny-edge bets (e.g. NO at $0.99 for a $0.01 payout)."""
+    raw = _parse_pct(target_prob_str)
+    if raw is None:
+        return "SKIP", 0.0
+    model_prob = raw / 100.0
+    edge = round(model_prob - yes_price, 4)
+    near_certainty = yes_price >= NEAR_CERTAIN or yes_price <= (1.0 - NEAR_CERTAIN)
+    threshold = NEAR_CERTAIN_EDGE if near_certainty else EDGE_THRESHOLD
+    if edge > threshold:
+        return "YES", edge
+    elif edge < -threshold:
+        return "NO", edge
+    else:
+        return "SKIP", edge
 
 
 def _pct_str(v) -> str:
@@ -453,17 +466,22 @@ Submit your call by calling the submit_prediction tool. Do not write any prose o
         range_prob_pct  = _pct_str(data.get("range_prob"))
         pp              = data.get("predicted_price")
         predicted_str   = f"{float(pp):,.0f}" if isinstance(pp, (int, float)) else "?"
-        raw_bet         = str(data.get("bet", "SKIP")).strip().upper()
-        bet             = _gate_bet(raw_bet, target_prob_pct)   # hard floor overrides Claude
-        if bet != raw_bet:
-            log.info(f"Confidence gate: {raw_bet} blocked (target_prob={target_prob_pct}) → SKIP")
+
+        # Edge gate: compare model probability to Kalshi market price
+        kalshi_yes = selected_market["yes_price"] if selected_market else 0.5
+        bet, edge  = _edge_gate(target_prob_pct, kalshi_yes)
+        edge_tag   = f"edge={edge:+.2f} model={target_prob_pct} kalshi={kalshi_yes:.2f}"
+        log.info(f"Edge gate: {edge_tag} → {bet}")
+
+        reason_base = str(data.get("reason", "No reason given")).strip()
+        reason = f"{reason_base} [{edge_tag}]"
 
         return {
             "target_prob":     target_prob_pct,
             "predicted_price": predicted_str,
             "range_prob":      range_prob_pct,
             "bet":             bet,
-            "reason":          str(data.get("reason", "No reason given")).strip(),
+            "reason":          reason,
         }
 
     except Exception as e:
