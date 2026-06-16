@@ -1,169 +1,173 @@
-"""
-JARVIS Kalshi Auto-Grader
-Runs every 15 minutes, grades resolved bets, updates DB
-Accepts manual grading via jarvis_memory.db kalshi_manual_results table
-"""
-import sys, time, logging
-sys.path.insert(0, '/root/jarvis')
-import requests
-import sqlite3
+#!/usr/bin/env python3
+import sqlite3, logging, requests
 from datetime import datetime
-import jarvis_memory_db as memdb
+from zoneinfo import ZoneInfo
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger(__name__)
-DB = '/root/jarvis/jarvis_memory.db'
 
-def init_manual_results_table():
-    """Create table for manual bet result submissions"""
-    conn = sqlite3.connect(DB)
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS kalshi_manual_results (
-            id TEXT PRIMARY KEY,
-            bet_id TEXT NOT NULL,
-            result TEXT NOT NULL,
-            pnl REAL,
-            submitted_at TEXT,
-            processed INTEGER DEFAULT 0,
-            FOREIGN KEY(bet_id) REFERENCES kalshi_bets(id)
-        )
-    """)
-    conn.commit()
-    conn.close()
-    log.info("Manual results table initialized")
+DB_PATH        = "/root/jarvis/jarvis_memory.db"
+KALSHI_API_KEY = "f3c367c6-92fe-455f-ae54-2dcef68d07a7"
+KALSHI_BASE    = "https://api.elections.kalshi.com/trade-api/v2"
 
-def fetch_market(ticker: str) -> dict:
-    """Fetch a single market by ticker"""
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _fetch_market_result(ticker: str) -> str | None:
+    """Fetch settlement result from Kalshi API. Returns 'yes', 'no', or None if not yet settled."""
     try:
-        parts = ticker.rsplit('-T', 1)
-        event_ticker = parts[0] if len(parts) == 2 else ticker
         r = requests.get(
-            f"https://api.elections.kalshi.com/trade-api/v2/events/{event_ticker}",
+            f"{KALSHI_BASE}/markets/{ticker}",
+            headers={"Authorization": f"Bearer {KALSHI_API_KEY}"},
             timeout=10
         )
         if r.status_code != 200:
-            return {}
-        markets = r.json().get('markets', [])
-        for m in markets:
-            if m.get('ticker') == ticker:
-                return m
-        return markets[0] if markets else {}
+            log.warning(f"Kalshi API {r.status_code} for {ticker}")
+            return None
+        market = r.json().get("market", {})
+        result = market.get("result", "")
+        return result.lower() if result else None
     except Exception as e:
-        log.error(f"fetch_market error: {e}")
-        return {}
+        log.error(f"Kalshi API error for {ticker}: {e}")
+        return None
 
-def grade_bet(bet_id, side, yes_price_paid, no_price_paid, market):
-    """Determine WIN/LOSS and pnl from resolved market"""
-    result = market.get('result', '').lower()
-    if result not in ('yes', 'no'):
-        return None, None
-    if side.upper() == 'YES':
-        won = result == 'yes'
-        price_paid = yes_price_paid or 0.50
-    else:
-        won = result == 'no'
-        price_paid = no_price_paid or 0.50
-    if won:
-        pnl = round(1.0 - price_paid, 4)
-        outcome = 'WIN'
-    else:
-        pnl = round(-price_paid, 4)
-        outcome = 'LOSS'
-    return outcome, pnl
 
-def process_manual_results():
-    """Check for manually submitted bet results and apply them"""
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, bet_id, result, pnl FROM kalshi_manual_results
-        WHERE processed=0
-    """)
-    manual = cur.fetchall()
-    if manual:
-        log.info(f"Processing {len(manual)} manual results")
-    for mr in manual:
-        bet_id = mr['bet_id']
-        result = mr['result'].upper()
-        pnl = mr['pnl']
-        if result not in ('WIN', 'LOSS', 'VOID'):
-            log.error(f"Manual result {mr['id']}: invalid result '{result}', skipping")
-            continue
-        cur.execute("""
-            UPDATE kalshi_bets
-            SET result=?, pnl=?, graded_at=?
-            WHERE id=?
-        """, (result, pnl, datetime.now().isoformat(), bet_id))
-        cur.execute("""
-            UPDATE kalshi_manual_results
-            SET processed=1
-            WHERE id=?
-        """, (mr['id'],))
+def _compute_pnl(bet: str, market_result: str, yes_price: float, no_price: float) -> tuple[str, float]:
+    """Return (WIN|LOSS, pnl_per_contract) based on bet direction and settlement."""
+    if bet == "YES":
+        if market_result == "yes":
+            return "WIN", round(1.0 - yes_price, 4)
+        else:
+            return "LOSS", round(-yes_price, 4)
+    elif bet == "NO":
+        if market_result == "no":
+            return "WIN", round(1.0 - no_price, 4)
+        else:
+            return "LOSS", round(-no_price, 4)
+    return "LOSS", 0.0
+
+
+def grade_bets():
+    conn = get_db()
+    try:
+        graded_at = datetime.now(ZoneInfo("America/New_York")).isoformat()
+
+        # ── Path 1: API settlement for real-market rows (source='auto', has ticker) ──
+        api_candidates = conn.execute("""
+            SELECT id, symbol, bet, strike, market, yes_price, no_price
+            FROM kalshi_bets
+            WHERE result IS NULL
+              AND source = 'auto'
+              AND market IS NOT NULL AND market != ''
+        """).fetchall()
+
+        api_graded = 0
+        for row in api_candidates:
+            market_result = _fetch_market_result(row["market"])
+            if not market_result:
+                continue   # not yet settled — skip
+            outcome, pnl = _compute_pnl(row["bet"], market_result, row["yes_price"], row["no_price"])
+            conn.execute(
+                "UPDATE kalshi_bets SET result=?, pnl=?, graded_at=? WHERE id=?",
+                (outcome, pnl, graded_at, row["id"])
+            )
+            log.info(f"[API] Graded id={row['id']} {row['market']} bet={row['bet']}"
+                     f" → {market_result.upper()} {outcome} pnl={pnl:+.4f}")
+            api_graded += 1
+
         conn.commit()
-        log.info(f"Applied manual result: bet {bet_id} → {result} pnl={pnl}")
-    conn.close()
 
-def run_grader():
-    log.info("Kalshi grader running...")
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    conn.close()
-    process_manual_results()
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, ts, bet, yes_price, no_price, market, strike
-        FROM kalshi_bets
-        WHERE result IS NULL AND market IS NOT NULL
-    """)
-    ungraded = cur.fetchall()
-    log.info(f"Ungraded bets with ticker: {len(ungraded)}")
-    graded = 0
-    for bet in ungraded:
-        market_data = fetch_market(bet['market'])
-        if not market_data:
-            log.info(f"Bet {bet['id']}: market not found for {bet['market']}")
-            continue
-        status = market_data.get('status', '')
-        if status != 'finalized':
-            log.info(f"Bet {bet['id']}: still active (status={status})")
-            continue
-        outcome, pnl = grade_bet(bet['id'], bet['bet'], bet['yes_price'], bet['no_price'], market_data)
-        if outcome is None:
-            log.info(f"Bet {bet['id']}: no result yet")
-            continue
-        cur.execute("""
-            UPDATE kalshi_bets
-            SET result=?, pnl=?, graded_at=?
-            WHERE id=?
-        """, (outcome, pnl, datetime.now().isoformat(), bet['id']))
+        # ── Path 2: Manual results fallback (join on symbol/bet/strike, any source) ──
+        manual_candidates = conn.execute("""
+            SELECT kb.id, kb.symbol, kb.bet, kb.strike, kmr.result, kmr.pnl
+            FROM kalshi_bets kb
+            LEFT JOIN kalshi_manual_results kmr
+              ON kb.symbol=kmr.symbol AND kb.bet=kmr.bet AND kb.strike=kmr.strike
+            WHERE kb.result IS NULL
+              AND kmr.result IS NOT NULL
+              AND (kb.source IS NULL OR kb.source != 'synthetic')
+        """).fetchall()
+
+        manual_graded = 0
+        for bet in manual_candidates:
+            conn.execute(
+                "UPDATE kalshi_bets SET result=?, pnl=?, graded_at=? WHERE id=?",
+                (bet["result"], bet["pnl"], graded_at, bet["id"])
+            )
+            log.info(f"[Manual] Graded id={bet['id']} {bet['symbol']} {bet['bet']}"
+                     f" → {bet['result']} pnl={bet['pnl']}")
+            manual_graded += 1
+
         conn.commit()
-        log.info(f"Graded bet {bet['id']}: {bet['bet']} → {outcome} pnl={pnl}")
-        graded += 1
-    cur.execute("""
-        SELECT id, ts, bet, yes_price, no_price, strike
-        FROM kalshi_bets
-        WHERE result IS NULL AND (market IS NULL OR market='')
-        AND ts >= date('now', '-30 days')
-    """)
-    no_ticker = cur.fetchall()
-    log.info(f"Ungraded bets without ticker: {len(no_ticker)} (awaiting manual grading)")
-    conn.close()
-    log.info(f"Grading complete. Auto-graded {graded} bets.")
-    return graded
 
-def main():
-    init_manual_results_table()
-    log.info("KALSHI GRADER ONLINE — checking every 15 minutes")
-    while True:
-        try:
-            run_grader()
-        except Exception as e:
-            log.error(f"Grader error: {e}")
-        time.sleep(900)
+        if api_graded == 0 and manual_graded == 0:
+            log.info("No bets newly graded this run")
 
-if __name__ == '__main__':
-    main()
+        # ── Update brain stats (real bets only — exclude synthetic) ──
+        stats = conn.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN result IS NOT NULL THEN 1 ELSE 0 END) as graded,
+                   SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) as wins,
+                   SUM(pnl) as pnl
+            FROM kalshi_bets
+            WHERE result IS NOT NULL
+              AND (source IS NULL OR source != 'synthetic')
+        """).fetchone()
+
+        if stats["graded"] and stats["graded"] > 0:
+            wr = stats["wins"] / stats["graded"] * 100
+            conn.execute("INSERT OR REPLACE INTO brain (key, value, updated_at) VALUES (?, ?, ?)",
+                ("kalshi_win_rate", str(round(wr, 1)), graded_at))
+            conn.execute("INSERT OR REPLACE INTO brain (key, value, updated_at) VALUES (?, ?, ?)",
+                ("kalshi_pnl", str(round(stats["pnl"] or 0, 2)), graded_at))
+            conn.commit()
+            log.info(f"Stats: WR={wr:.1f}% ({stats['wins']}/{stats['graded']}) | P&L={stats['pnl']:+.2f}")
+
+    except Exception as e:
+        log.error(f"Error: {e}")
+    finally:
+        conn.close()
+
+
+def print_record():
+    """Print honest record split: real bets vs synthetic."""
+    conn = get_db()
+    try:
+        real = conn.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) as wins,
+                   SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END) as losses,
+                   SUM(pnl) as pnl
+            FROM kalshi_bets
+            WHERE source = 'auto' AND result IS NOT NULL
+        """).fetchone()
+        pending = conn.execute("""
+            SELECT COUNT(*) as n FROM kalshi_bets
+            WHERE source = 'auto' AND result IS NULL AND bet != 'SKIP'
+        """).fetchone()["n"]
+        synthetic = conn.execute(
+            "SELECT COUNT(*) as n FROM kalshi_bets WHERE source = 'synthetic'"
+        ).fetchone()["n"]
+
+        print("\n=== KALSHI BET RECORD ===")
+        print(f"REAL (source=auto):  {real['total']} graded | {real['wins']} W / {real['losses']} L"
+              f" | WR={real['wins']/real['total']*100:.0f}% | P&L={real['pnl']:+.2f}" if real["total"] else
+              "REAL (source=auto): 0 graded bets")
+        print(f"Pending (ungraded):  {pending} real bets awaiting settlement")
+        print(f"SYNTHETIC (excluded): {synthetic} rows (quarantined, never modified)")
+        print("========================\n")
+    except Exception as e:
+        log.error(f"print_record error: {e}")
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    log.info("Kalshi grader online")
+    grade_bets()
+    print_record()

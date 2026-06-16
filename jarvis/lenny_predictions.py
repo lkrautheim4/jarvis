@@ -3,7 +3,7 @@ lenny_predictions.py — Jarvis BTC Prediction Bot
 Full memory + learning loop. Jarvis never forgets.
 """
 
-import requests, json, time, logging, os, sys, math
+import requests, json, time, logging, os, sys, math, sqlite3
 from datetime import datetime, timezone
 import jarvis_brain
 import btc_memory
@@ -16,10 +16,11 @@ logging.basicConfig(
 log = logging.getLogger("lenny_predictions")
 
 # ── Config ──────────────────────────────────────────────────────────────────
-from jarvis_secrets import CLAUDE_API_KEY
-TG_TOKEN        = "8713474292:AAEtNCL6xuqIbS3Adf5KsFhH5xZ3XQ7Rz0o"   # @Lenny_predictions_bot (was truncated → 404)
+from jarvis_secrets import CLAUDE_API_KEY, TG_TOKEN_LENNY
+TG_TOKEN        = TG_TOKEN_LENNY   # @Lenny_predictions_bot — stored in secrets.json
 TG_CHAT_ID      = "7534553840"
 KALSHI_API_KEY  = "f3c367c6-92fe-455f-ae54-2dcef68d07a7"
+DB_PATH         = "/root/jarvis/jarvis_memory.db"
 
 SYMBOL          = "BTC"
 CHECK_INTERVAL  = 3600          # 1 hour
@@ -210,25 +211,82 @@ def get_momentum(symbol: str) -> dict:
 
 # ── Kalshi ────────────────────────────────────────────────────────────────────
 def get_kalshi_odds(symbol: str) -> list:
+    """Fetch open KXBTCD markets. Returns list of dicts with ticker, strike,
+    yes_price/no_price (in dollars 0-1), and display yes_bid/no_bid (cents)."""
     try:
         r = requests.get(
             "https://api.elections.kalshi.com/trade-api/v2/markets",
-            params={"status": "open", "series_ticker": f"{symbol}USD"},
+            params={"status": "open", "series_ticker": "KXBTCD", "limit": 20},
             headers={"Authorization": f"Bearer {KALSHI_API_KEY}"},
             timeout=10
         )
         markets = r.json().get("markets", [])
         out = []
-        for m in markets[:5]:
+        for m in markets:
+            yes_d = m.get("yes_bid_dollars") or 0.0
+            no_d  = m.get("no_bid_dollars")  or 0.0
             out.append({
-                "title":   m.get("title", ""),
-                "yes_bid": m.get("yes_bid", 0),
-                "no_bid":  m.get("no_bid", 0),
+                "ticker":     m.get("ticker", ""),
+                "title":      m.get("title", ""),
+                "strike":     float(m.get("floor_strike") or 0),
+                "close_time": m.get("close_time", ""),
+                "yes_price":  round(float(yes_d), 4),
+                "no_price":   round(float(no_d), 4),
+                # Legacy cent-denominated fields kept for prompt display
+                "yes_bid":    int(round(float(yes_d) * 100)),
+                "no_bid":     int(round(float(no_d) * 100)),
             })
         return out
     except Exception as e:
         log.error(f"Kalshi error: {e}")
         return []
+
+
+def select_kalshi_market(price: float, markets: list) -> dict | None:
+    """Pick the tradeable Kalshi market whose strike is closest to the current
+    price, preferring the lowest one above price (cheapest YES bet to evaluate)."""
+    if not markets:
+        return None
+    above = [m for m in markets if m["strike"] >= price]
+    below = [m for m in markets if m["strike"] < price]
+    if above:
+        return min(above, key=lambda m: m["strike"])
+    if below:
+        return max(below, key=lambda m: m["strike"])
+    return None
+
+
+def _log_kalshi_pred(symbol: str, ts: str, target: float, bet: str,
+                     prob: str, yes_price: float, no_price: float,
+                     reason: str, market_ticker: str) -> int | None:
+    """Write one prediction row to kalshi_bets with real market data.
+    Returns the new row id, or None on error. Skips SKIP bets (no contract placed)."""
+    if bet == "SKIP":
+        return None
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        # Dedup: don't double-log if called twice within 60 seconds for same symbol+bet
+        cutoff = ts[:16]   # minute-level prefix
+        existing = conn.execute(
+            "SELECT id FROM kalshi_bets WHERE symbol=? AND market=? AND ts >= ?",
+            (symbol, market_ticker, cutoff)
+        ).fetchone()
+        if existing:
+            conn.close()
+            return existing[0]
+        cur = conn.execute("""
+            INSERT INTO kalshi_bets(ts, symbol, strike, bet, prob, yes_price, no_price,
+                                    reason, market, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto')
+        """, (ts, symbol, target, bet, prob, yes_price, no_price, reason, market_ticker))
+        row_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return row_id
+    except Exception as e:
+        log.error(f"_log_kalshi_pred DB error: {e}")
+        return None
 
 
 # ── Confidence gate ───────────────────────────────────────────────────────────
@@ -288,27 +346,42 @@ PRED_TOOL = {
 # ── Claude ────────────────────────────────────────────────────────────────────
 def ask_claude(symbol: str, price: float, target: float,
                low: float, high: float,
-               rsi: float, momentum: dict) -> dict:
+               rsi: float, momentum: dict,
+               kalshi_markets: list | None = None,
+               selected_market: dict | None = None) -> dict:
     try:
         shared    = jarvis_brain.read_brain()
         mood      = shared.get("market_mood", "neutral")
         btc_sig   = shared.get("btc_signal", "neutral")
-        kalshi    = get_kalshi_odds(symbol)
+        # Use pre-fetched markets passed in from run_prediction (avoids duplicate API call)
+        kalshi = kalshi_markets or []
         kalshi_txt = "; ".join(
-            [f"{m['title']} YES={m['yes_bid']}c NO={m['no_bid']}c" for m in kalshi]
+            [f"${m['strike']:,.2f} YES={m['yes_bid']}c NO={m['no_bid']}c" for m in kalshi[:5]]
         ) or "No Kalshi data"
         sr        = btc_memory.get_support_resistance()
         sr_txt    = (f"Support: ${sr.get('support',0):,.0f} | "
                      f"Resistance: ${sr.get('resistance',0):,.0f} | "
                      f"7d Avg: ${sr.get('avg',0):,.0f}") if sr else "Not enough data yet"
         memory_ctx = btc_memory.build_context()
-        next_hour  = str((datetime.now(timezone.utc).hour + 1) % 24) + ":00 UTC"
+
+        # Determine deadline from the selected market's close time if available
+        if selected_market and selected_market.get("close_time"):
+            deadline = selected_market["close_time"][:16].replace("T", " ") + " UTC"
+        else:
+            deadline = str((datetime.now(timezone.utc).hour + 1) % 24) + ":00 UTC"
+
+        # Show selected market entry price context if available
+        market_line = ""
+        if selected_market:
+            market_line = (f"\nSelected market: {selected_market['ticker']}"
+                           f"  YES=${selected_market['yes_price']:.2f}"
+                           f"  NO=${selected_market['no_price']:.2f}")
 
         prompt = f"""You are Jarvis, a sharp crypto trading AI with a perfect memory. You track every price, every prediction, every outcome. You are brutal, precise, and never vague.
 
 === CURRENT MARKET ===
 {symbol} @ ${price:,.2f}
-Kalshi target: above ${target:,.2f} by {next_hour}
+Kalshi target: above ${target:,.2f} by {deadline}{market_line}
 Prediction range: ${low:,.0f} - ${high:,.0f}
 RSI: {rsi} | 1h: {momentum.get('1h',0):+.2f}% | 24h: {momentum.get('24h',0):+.2f}% | 7d: {momentum.get('7d',0):+.2f}%
 Market mood: {mood} | BTC signal: {btc_sig}
@@ -316,7 +389,7 @@ Market mood: {mood} | BTC signal: {btc_sig}
 === SUPPORT / RESISTANCE ===
 {sr_txt}
 
-=== KALSHI MARKETS ===
+=== KALSHI MARKETS (open contracts) ===
 {kalshi_txt}
 
 === YOUR MEMORY ===
@@ -425,21 +498,46 @@ def run_prediction(symbol: str):
     graded = btc_memory.grade_last_prediction(price)
     if graded:
         log.info("Graded last prediction")
+    # Regime-aware grading: tags each prediction TRENDING/CHOP, marks bet-eligibility
+    try:
+        import btc_regime_grader
+        rg = btc_regime_grader.grade(verbose=False)
+        if rg:
+            log.info(f"Regime grader: tagged {rg} prediction(s)")
+    except Exception as e:
+        log.error(f"Regime grader failed (non-fatal): {e}")
 
-    # 3. Pick target. If the user has an active WATCH, anchor on that price;
-    #    otherwise use the closest target above the live price.
-    watch   = get_watch_strike()
-    targets = make_targets(price, watch)
-    if watch:
-        target = int(round(watch / 100.0) * 100)        # anchor the call on the watched level
-        log.info(f"Anchoring target on WATCH price ${watch:,.2f} → ${target:,}")
+    # 3. Fetch real Kalshi markets once (used for both target selection and the Claude prompt)
+    kalshi_markets = get_kalshi_odds(symbol)
+    selected_market = select_kalshi_market(price, kalshi_markets)
+
+    if selected_market:
+        target         = selected_market["strike"]
+        market_ticker  = selected_market["ticker"]
+        yes_price      = selected_market["yes_price"]
+        no_price       = selected_market["no_price"]
+        log.info(f"Real Kalshi market selected: {market_ticker} strike=${target:,.2f}"
+                 f" YES=${yes_price:.4f} NO=${no_price:.4f}")
     else:
-        above  = [t for t in targets if t > price]
-        target = min(above) if above else max(targets)
+        # Fallback to synthetic round-number target when no Kalshi markets available
+        watch   = get_watch_strike()
+        targets = make_targets(price, watch)
+        if watch:
+            target = int(round(watch / 100.0) * 100)
+            log.info(f"Anchoring target on WATCH price ${watch:,.2f} → ${target:,}")
+        else:
+            above  = [t for t in targets if t > price]
+            target = min(above) if above else max(targets)
+        market_ticker  = ""
+        yes_price      = 0.5
+        no_price       = 0.5
+        log.warning("No Kalshi markets available — falling back to synthetic target")
+
     low, high = make_range(price)
 
-    # 4. Ask Claude (with full memory context)
-    pred = ask_claude(symbol, price, target, low, high, rsi, momentum)
+    # 4. Ask Claude (with full memory context and pre-fetched Kalshi markets)
+    pred = ask_claude(symbol, price, target, low, high, rsi, momentum,
+                      kalshi_markets=kalshi_markets, selected_market=selected_market)
 
     # 5. Log this prediction — skip write on API failure (never pollute DB with stubs)
     if pred.get("reason") == "Claude unavailable":
@@ -450,9 +548,25 @@ def run_prediction(symbol: str):
             pred["target_prob"], pred["predicted_price"],
             pred["range_prob"],  pred["bet"], pred["reason"]
         )
+        # Write a real-market bet row to kalshi_bets (source='auto') only when we have
+        # an actual Kalshi ticker — never write synthetic placeholders to this table.
+        if market_ticker:
+            ts_now = datetime.now(timezone.utc).isoformat()
+            row_id = _log_kalshi_pred(
+                symbol=symbol, ts=ts_now, target=target, bet=pred["bet"],
+                prob=pred["target_prob"], yes_price=yes_price, no_price=no_price,
+                reason=pred["reason"], market_ticker=market_ticker
+            )
+            if row_id:
+                log.info(f"Logged kalshi_bets row id={row_id} market={market_ticker} bet={pred['bet']}")
 
     # 6. Build Telegram message
-    next_hour  = str((datetime.now(timezone.utc).hour + 1) % 24) + ":00"
+    if selected_market and selected_market.get("close_time"):
+        deadline = selected_market["close_time"][:16].replace("T", " ") + " UTC"
+        market_tag = f"\nMarket: {selected_market['ticker']}"
+    else:
+        deadline  = str((datetime.now(timezone.utc).hour + 1) % 24) + ":00 UTC"
+        market_tag = ""
     diff       = target - price
     diff_str   = f"UP ${diff:,.2f}" if diff > 0 else f"DOWN ${abs(diff):,.2f}"
     bet        = pred["bet"]
@@ -465,9 +579,9 @@ def run_prediction(symbol: str):
     msg = f"""🤖 JARVIS PREDICTIONS
 {'='*24}
 {symbol} @ ${price:,.2f}
-Target: ${target:,.0f} ({diff_str})
+Target: ${target:,.2f} ({diff_str}){market_tag}
 Range:  ${low:,.0f} - ${high:,.0f}
-Deadline: {next_hour}
+Deadline: {deadline}
 {'='*24}
 {bet_line}
 Target prob:  {pred['target_prob']}
