@@ -16,6 +16,8 @@ log = logging.getLogger("jarvis_watchdog")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_TRADER
+ALPACA_KEY     = __import__("jarvis_secrets").ALPACA_PAPER_KEY
+ALPACA_SECRET  = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
 TELEGRAM_CHAT  = "7534553840"
 JARVIS_DIR     = "/root/jarvis"
 
@@ -34,6 +36,7 @@ BOTS = [
     {"name": "lenny_trader_bot",     "file": "lenny_trader_bot.py",     "flag": "", "critical": False},
     {"name": "options_grader",       "file": "options_grader.py",       "flag": "", "critical": False},
     {"name": "btc_ticker",           "file": "btc_ticker.py",           "flag": "", "critical": False},
+    {"name": "jarvis_learning",      "file": "jarvis_learning.py",      "flag": "", "critical": False},
 ]
 
 # Heartbeat timeout — bot considered dead if no heartbeat in N seconds
@@ -209,18 +212,8 @@ def check_log_errors(bot: dict) -> int:
         return 0
 
 def check_brain_freshness() -> bool:
-    try:
-        brain = json.load(open(f"{JARVIS_DIR}/jarvis_central_brain.json"))
-        last  = brain.get("last_updated", "")
-        if not last: return False
-        age = (datetime.now() - datetime.fromisoformat(last)).total_seconds()
-        if age > 10800:
-            tg_throttled("brain_stale", f"⚠️ Brain stale: last updated {int(age/60)}min ago")
-            return False
-        return True
-    except:
-        tg_throttled("brain_corrupt", "⚠️ Brain unreadable — possible corruption")
-        return False
+    # jarvis_central_brain.json removed with old bot stack — no-op until a replacement is wired
+    return True
 
 def check_external_apis():
     issues = []
@@ -231,8 +224,8 @@ def check_external_apis():
         issues.append("Coinbase unreachable")
     try:
         r = requests.get("https://paper-api.alpaca.markets/v2/account",
-            headers={"APCA-API-KEY-ID":"PKTHANGUNVFDSLLR3VXPETXRQF",
-                     "APCA-API-SECRET-KEY":"GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"}, timeout=5)
+            headers={"APCA-API-KEY-ID": ALPACA_KEY,
+                     "APCA-API-SECRET-KEY": ALPACA_SECRET}, timeout=5)
         if r.status_code != 200: issues.append("Alpaca down")
     except:
         issues.append("Alpaca unreachable")
