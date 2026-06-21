@@ -312,6 +312,11 @@ def main():
                 log.info(f"Market closed (EDT hour {edt_hour}) — sleeping")
         except Exception as e:
             log.error(f"Grader error: {e}")
+        try:
+            import jarvis_brain
+            jarvis_brain.update_bot_heartbeat("options_grader")
+        except Exception:
+            pass
         time.sleep(300)  # every 5 minutes
 
 if __name__ == '__main__':

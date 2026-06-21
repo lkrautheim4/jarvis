@@ -114,6 +114,11 @@ def main():
             logging.error(f"BTC tick error: {e}")
         finally:
             conn.close()
+            try:
+                import jarvis_brain
+                jarvis_brain.update_bot_heartbeat("btc_ticker")
+            except Exception:
+                pass
             time.sleep(300)
 
 if __name__ == "__main__":

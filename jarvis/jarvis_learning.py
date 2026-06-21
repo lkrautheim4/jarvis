@@ -58,6 +58,11 @@ def main():
                         ("learned_ticker_rules", json.dumps(rules), ts))
             conn.commit()
             log.info(f"Analyzed {closed} trades, {len(ticker_stats)} tickers")
+            try:
+                import jarvis_brain
+                jarvis_brain.update_bot_heartbeat("jarvis_learning")
+            except Exception:
+                pass
             time.sleep(1800)
         except Exception as e:
             log.error(f"ERROR: {e}")

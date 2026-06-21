@@ -426,6 +426,11 @@ def main():
             save_brain(brain)
         except Exception as e:
             log.error(f"Premium cycle: {e}")
+        try:
+            import jarvis_brain
+            jarvis_brain.update_bot_heartbeat("jarvis_premium")
+        except Exception:
+            pass
         time.sleep(INTERVAL)
 
 if __name__ == "__main__":
