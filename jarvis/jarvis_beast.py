@@ -162,9 +162,9 @@ def calc_volume_ratio(volumes):
     return round(volumes[-1]/avg, 2) if avg > 0 else 1.0
 
 # ── SIGNAL ENGINE ────────────────────────────────────────
-def analyze_ticker(ticker, sector, brain, cb, congress_data):
+def analyze_ticker(ticker, sector, brain, cb, congress_data, ticker_rules=None):
     """
-    Score a ticker across 6 signal sources.
+    Score a ticker across 6 signal sources + learned history modifier.
     Returns (score, signals, data) or None if no data.
     """
     data = get_price_data(ticker)
@@ -236,6 +236,19 @@ def analyze_ticker(ticker, sector, brain, cb, congress_data):
         score += 1
     elif sector_score < -1.0:
         signals.append(f"SECTOR ❌ {sector} weak {sector_score:+.1f}%")
+
+    # SIGNAL 7: Learned ticker history (from jarvis_learning → brain table)
+    if ticker_rules:
+        stats = ticker_rules.get(ticker)
+        if stats and stats.get("count", 0) >= 3:
+            wr = stats["wr"]
+            count = stats["count"]
+            if wr >= 70.0:
+                signals.append(f"LEARNED ✅ {ticker} WR={wr}% ({count} trades)")
+                score += 1
+            elif wr <= 30.0:
+                signals.append(f"LEARNED ❌ {ticker} WR={wr}% ({count} trades)")
+                score -= 1
 
     # BONUS: BTC risk-on check
     btc_signal = cb.get("btc_signal", "neutral")
@@ -401,6 +414,16 @@ def run_scan(brain):
         congress_data = json.load(open("/root/jarvis/jarvis_congress.json"))
     except: pass
 
+    # Load learned ticker rules from jarvis_learning (brain table)
+    ticker_rules = {}
+    try:
+        conn_lr = sqlite3.connect(DB_PATH, timeout=5)
+        row = conn_lr.execute("SELECT value FROM brain WHERE key='learned_ticker_rules'").fetchone()
+        conn_lr.close()
+        if row:
+            ticker_rules = json.loads(row[0]).get("ticker_stats", {})
+    except: pass
+
     # Check risk + macro regime
     if cb.get("risk_level") == "EXTREME":
         log.info("EXTREME risk — no new trades")
@@ -460,7 +483,7 @@ def run_scan(brain):
     def scan_ticker(ticker_sector):
         ticker, sector = ticker_sector
         try:
-            result = analyze_ticker(ticker, sector, brain, cb, congress_data)
+            result = analyze_ticker(ticker, sector, brain, cb, congress_data, ticker_rules)
             if result: return result
         except Exception as e:
             log.debug(f"Scan {ticker}: {e}")
