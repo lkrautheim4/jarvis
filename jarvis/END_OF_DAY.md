@@ -2,7 +2,7 @@
 
 ## Current git commit
 ```
-e4def67 Wire update_bot_heartbeat() into 4 remaining bots
+376a3e8 Wire heartbeat into jarvis_signal_generator
 ```
 
 ## Running services — 15 processes, 12 with active heartbeats
@@ -23,7 +23,7 @@ e4def67 Wire update_bot_heartbeat() into 4 remaining bots
 | jarvis_beast | 92534 | 17:56:08 | ✅ |
 | jarvis_watchdog | 92002 | — (monitor, no row) | ✅ running |
 | jarvis_trader | 2170 | — (has update_bot_heartbeat, next cycle) | ✅ running |
-| jarvis_signal_generator | 1506 | — (no heartbeat wired) | ✅ running |
+| jarvis_signal_generator | 95099 | 17:58:34 | ✅ |
 
 Dead/old stack (expected, not running):
 jarvis_cascade, jarvis_briefing, jarvis_congress, jarvis_trade_advisor,
@@ -44,26 +44,26 @@ jarvis_intel, jarvis_webull_alerts, jarvis_range_detector, jarvis_capital, jarvi
 9. **Heartbeat coverage** — wired update_bot_heartbeat() into jarvis_premium, options_grader,
    btc_ticker, jarvis_learning. All 4 verified fresh in bot_heartbeats within one cycle.
 10. **README.md** — rewrote from stale Anthropic template to accurate JARVIS fleet docs
+11. **jarvis_signal_generator heartbeat** — last bot without coverage; now wired.
+    All 15 running services have full watchdog heartbeat coverage.
 
 ## Verified working components
 
-- All 12 active bots writing fresh heartbeats to bot_heartbeats (verified 17:57)
+- All 15 bots running; 13 writing fresh heartbeats to bot_heartbeats (verified ~17:58)
+- jarvis_watchdog has full process + heartbeat coverage across entire fleet
 - BET/BET15/WIN/LOSS/MANUAL smoke tested against real DB
 - entry_spot captured on plain BET (DB row 324: 64095.29, non-NULL)
 - manual_stats() isolated to source='manual_user' only
 - Zero hardcoded secrets — grep confirmed across all .py and .sh
-- jarvis_watchdog monitors 14 bots by process + heartbeat staleness
 
 ## Known issues
 
-1. **jarvis_signal_generator** — running (PID 1506) but no heartbeat wired. One remaining bot
-   without coverage.
-2. **kalshi_bets row 322** — entry_spot=NULL (pre-fix smoke test row). Graded LOSS. Harmless.
-3. **Auto Kalshi win rate: 18.2% on 101 bets** — low. Not investigated today.
-4. **Old stack rows in bot_heartbeats** — jarvis_cascade/briefing/etc. stale since June 1–15.
+1. **kalshi_bets row 322** — entry_spot=NULL (pre-fix smoke test row). Graded LOSS. Harmless.
+2. **Auto Kalshi win rate: 18.2% on 101 bets** — low. Not investigated today.
+3. **Old stack rows in bot_heartbeats** — jarvis_cascade/briefing/etc. stale since June 1–15.
    Noise only, not harmful.
 
 ## Recommended next task
 
-Wire `update_bot_heartbeat("jarvis_signal_generator")` into jarvis_signal_generator.py.
-That gives the watchdog complete heartbeat coverage across all 15 running services.
+Investigate why auto Kalshi win rate is 18.2% on 101 bets. Check model edge,
+market selection, and whether lenny_predictions is betting into unfavorable spreads.
