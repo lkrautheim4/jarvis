@@ -20,13 +20,16 @@ try:
     import jarvis_brain as _jb_hb   # SQLite heartbeat the watchdog reads
 except Exception:
     _jb_hb = None
+try:
+    import jarvis_manual_bets as jmb
+except Exception as _jmb_e:
+    jmb = None
 from datetime import datetime, timedelta, timezone
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("JARVIS")
 # ── CONFIG ──────────────────────────────────────────────────────────────────
 from jarvis_secrets import CLAUDE_API_KEY as CLAUDE_KEY
-ALPACA_KEY     = "PKTHANGUNVFDSLLR3VXPETXRQF"
-ALPACA_SECRET  = "GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"
+from jarvis_secrets import ALPACA_PAPER_KEY as ALPACA_KEY, ALPACA_PAPER_SECRET as ALPACA_SECRET
 ALPACA_BASE    = "https://paper-api.alpaca.markets"
 TG_TRADER      = __import__("jarvis_secrets").TG_TOKEN_TRADER
 TG_PRED        = "8713474292:AAEtNCL6xuqIbS3Adf5KsFhH5xZ3XQ7Rz0o"
@@ -961,7 +964,9 @@ def attempt_scalp(master, symbol, mode, price, rsi, funding_rate, volume_ratio):
     alpaca_sym = crypto_map.get(symbol, symbol+"USD")
     qty = round(size / price, 6)
     result = place_order(alpaca_sym, qty, side)
-    if result:
+    order_status = (result or {}).get("status")
+    # Count only orders Alpaca accepted into a fillable state; never count rejected/None.
+    if result and order_status not in ("rejected", "canceled", "expired", None):
         master["stats"]["total_trades"] += 1
         trade = {
             "id": datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
@@ -1246,30 +1251,25 @@ def log_bet(side, dollars, btype="hourly"):
     save_kalshi_brain(kb)
 
 def grade_bet(won, actual_payout=None):
-    kb = load_kalshi_brain()
-    for bet in reversed(kb["bets"]):
-        if bet["result"] is None:
-            bet["result"] = "WIN" if won else "LOSS"
-            dollars = bet.get("dollars", 50)
-            if won:
-                bet["pnl"] = round(actual_payout - dollars, 2) if actual_payout else dollars
-                bet["payout"] = actual_payout or dollars
-            else:
-                bet["pnl"] = -dollars
-            kb["stats"] = recompute_kalshi_stats(kb)  # Task 9
-            save_kalshi_brain(kb)
-            return bet, kb
-    return None, kb
+    # Stub — manual bets now graded via jmb.grade_manual_bet(); no pnl written here.
+    return None, load_kalshi_brain()
 
 def log_pred_call(price, direction, conf, mins):
-    kb = load_kalshi_brain()
-    if "preds" not in kb: kb["preds"] = []
-    kb["preds"].append({"id":datetime.now().strftime("%Y%m%d%H%M%S"),
-        "ts":datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "price":price,"direction":direction,"conf":conf,"mins":mins,
-        "result":None,"correct":None})
-    kb["stats"]["pred_total"] = kb["stats"].get("pred_total",0)+1
-    save_kalshi_brain(kb)
+    """Log PRED call to active session"""
+    try:
+        with open("/root/jarvis/active_session.json", "r") as f:
+            session = json.load(f)
+    except:
+        session = {"preds": []}
+    if "preds" not in session: session["preds"] = []
+    session["preds"].append({
+        "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "price": price, "direction": direction, "conf": conf, "mins": mins,
+        "result": None, "correct": None
+    })
+    with open("/root/jarvis/active_session.json", "w") as f:
+        json.dump(session, f, indent=2)
 
 def grade_pred_call(actual_price):
     kb = load_kalshi_brain()
@@ -1303,30 +1303,70 @@ def get_pred_accuracy_context():
     return f"15-min accuracy: {wr}% ({correct}/{total}) | ABOVE:{a_wr}% BELOW:{b_wr}% | Last5:{last5}"
 
 def kalshi_stats_msg():
-    kb = load_kalshi_brain()
-    s = kb["stats"]
-    total = s["total"]
-    if total == 0: return "No bets yet.\nBET YES/NO <$> to log"
-    wr = round(s["wins"]/total*100) if total > 0 else 0
-    yes_wr = round(s["yes_wins"]/s["yes_total"]*100) if s["yes_total"] > 0 else 0
-    no_wr  = round(s["no_wins"]/s["no_total"]*100)  if s["no_total"] > 0 else 0
-    pt = s.get("pred_total",0)
-    pc = s.get("pred_correct",0)
-    pred_wr = round(pc/pt*100) if pt > 0 else 0
-    last5 = [b for b in kb["bets"] if b["result"]][-5:]
-    last5_str = " ".join([f"W${abs(b.get('pnl',0)):.0f}" if b["result"]=="WIN" else f"L${abs(b.get('pnl',0)):.0f}" for b in last5])
+    # Honest record from jarvis_memory.db (read-only), mirroring kalshi_grader.
+    # Old kb["stats"]["profit"] (+$2,018 even-money fabrication) is no longer read.
+    import sqlite3
+    DB_RO = "file:/root/jarvis/jarvis_memory.db?mode=ro"
+    try:
+        conn = sqlite3.connect(DB_RO, uri=True, timeout=5)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("""
+            SELECT
+              COUNT(*) AS total,
+              SUM(CASE WHEN result='WIN'  THEN 1 ELSE 0 END) AS wins,
+              SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END) AS losses,
+              ROUND(COALESCE(SUM(pnl),0),2) AS pnl,
+              SUM(CASE WHEN bet='YES' THEN 1 ELSE 0 END) AS yes_total,
+              SUM(CASE WHEN bet='YES' AND result='WIN' THEN 1 ELSE 0 END) AS yes_wins,
+              SUM(CASE WHEN bet='NO'  THEN 1 ELSE 0 END) AS no_total,
+              SUM(CASE WHEN bet='NO'  AND result='WIN' THEN 1 ELSE 0 END) AS no_wins
+            FROM kalshi_bets
+            WHERE source='auto' AND result IN ('WIN','LOSS')
+        """).fetchone()
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM kalshi_bets WHERE source='auto' AND result IS NULL"
+        ).fetchone()[0]
+        last5_rows = conn.execute("""
+            SELECT result, pnl FROM kalshi_bets
+            WHERE source='auto' AND result IN ('WIN','LOSS')
+            ORDER BY id DESC LIMIT 5
+        """).fetchall()
+        conn.close()
+    except Exception as e:
+        return f"KALSHI stats unavailable (DB read error: {e})"
 
-    # Pattern memory summary
-    patterns = load_patterns()
-    total_patterns = len(patterns["fingerprints"])
-    pat_summary = f"Pattern library: {total_patterns} fingerprints learned"
+    total = row["total"] or 0
+    if total == 0:
+        return "No graded bets yet.\nBET YES/NO <$> to log"
+    wins = row["wins"] or 0
+    wr = round(wins / total * 100)
+    yt, yw = row["yes_total"] or 0, row["yes_wins"] or 0
+    nt, nw = row["no_total"] or 0, row["no_wins"] or 0
+    yes_wr = round(yw / yt * 100) if yt else 0
+    no_wr  = round(nw / nt * 100) if nt else 0
+    pnl = row["pnl"] or 0.0
+    last5 = list(reversed(last5_rows))
+    last5_str = " ".join(
+        (f"W${abs(r['pnl'] or 0):.0f}" if r["result"] == "WIN" else f"L${abs(r['pnl'] or 0):.0f}")
+        for r in last5
+    ) or "—"
 
-    return (f"KALSHI TRACKER\n{'='*20}\n"
-            f"Bets: {total} | WR:{wr}% | P&L:${s['profit']:+.0f}\n"
-            f"YES:{s['yes_wins']}/{s['yes_total']}({yes_wr}%) NO:{s['no_wins']}/{s['no_total']}({no_wr}%)\n"
+    try:
+        kb = load_kalshi_brain()
+        s = kb.get("stats", {})
+        pt = s.get("pred_total", 0); pc = s.get("pred_correct", 0)
+        pred_wr = round(pc / pt * 100) if pt else 0
+        total_patterns = len(load_patterns().get("fingerprints", {}))
+    except Exception:
+        pt = pc = pred_wr = total_patterns = 0
+
+    return (f"KALSHI TRACKER (DB)\n{'='*20}\n"
+            f"Bets: {total} | WR:{wr}% | P&L:${pnl:+.2f}\n"
+            f"YES:{yw}/{yt}({yes_wr}%) NO:{nw}/{nt}({no_wr}%)\n"
+            f"Pending: {pending} awaiting settlement\n"
             f"15-min PRED: {pc}/{pt} ({pred_wr}%)\n"
             f"{'='*20}\nLast 5: {last5_str}\n"
-            f"{'='*20}\n{pat_summary}")
+            f"{'='*20}\nPattern library: {total_patterns} fingerprints")
 
 # ── TELEGRAM COMMAND HANDLER ──────────────────────────────────────────────────
 def handle_command(text, parts):
@@ -1375,18 +1415,26 @@ Submit your pick via the submit_best_trade tool."""
             # PRED <mins> — just minutes, fetch live price automatically
             # PRED <price> <mins> — explicit price + minutes
             btc_now = get_btc_price_from_kalshi() or 75000
+            # Read watched price from session
+            try:
+                with open("/root/jarvis/active_session.json") as sf:
+                    session = json.load(sf)
+                    watch_strike = session.get("strike")
+            except:
+                watch_strike = None
+            
             if len(parts) == 1:
-                # PRED alone — use live price, 15 min default
-                ref_price = btc_now
+                # PRED alone — use watch strike or live price, 15 min default
+                ref_price = watch_strike or btc_now
                 mins = 15
             elif len(parts) == 2:
                 val = float(parts[1].replace(",",""))
                 if val < 1000:
                     # Small number = minutes (e.g. PRED 14)
                     mins = int(val)
-                    ref_price = btc_now
+                    ref_price = watch_strike or btc_now
                 else:
-                    # Large number = explicit price (e.g. PRED 73500)
+                    # Large number = explicit price override
                     ref_price = val
                     mins = 15
             else:
@@ -1481,54 +1529,27 @@ Submit your call via the submit_direction tool (current BTC = ${btc_now:,.0f})."
     elif text.startswith("BET15"):
         try:
             side = parts[1]; dollars = float(parts[2])
-            log_bet(side, dollars, "15min")
-            # Task 5: manual snapshot
             _p15 = get_btc_price_from_kalshi() or 0
             _mkts15, _ = get_kalshi_markets(_p15 or 75000)
             _bm15 = _mkts15[0] if _mkts15 else None
-            _yp15 = _bm15.get("yes",0.0) if _bm15 else 0.0
+            _strike15 = _bm15["strike"] if _bm15 else 0.0
+            _yp15 = _bm15.get("yes", 0.0) if _bm15 else 0.0
             _np15 = _bm15.get("no", 0.0) if _bm15 else 0.0
-            _mb15 = {
-                "id": datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
-                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-                "symbol":"BTC","price_at_pred":round(_p15,2),
-                "target":_bm15["strike"] if _bm15 else None,"target_prob":None,
-                "predicted_price":None,"bet":side,"reason":"manual BET15","fingerprint":None,
-                "kalshi_yes_price":_yp15,"spread":round(abs(_yp15-_np15),4),"edge_pct":None,
-                "dollars":dollars,"actual_price":None,"target_hit":None,"graded":False,
-                "source":"manual","schema_version":SCHEMA_VERSION,
-            }
-            _kb15 = load_kalshi_brain()
-            if "kalshi_manual_bets" not in _kb15: _kb15["kalshi_manual_bets"] = []
-            _kb15["kalshi_manual_bets"].append(_mb15)
-            save_kalshi_brain(_kb15)
+            jmb.log_manual_bet(side, dollars, _strike15, _yp15, _np15,
+                               "manual BET15", entry_spot=round(_p15, 2))
             tg(f"Logged 15-MIN {side} ${dollars:.0f}\nText WIN <payout> or LOSS when done")
         except: tg("Format: BET15 YES 50")
 
     elif text.upper().startswith("BET"):
         try:
             parts = text.upper().split(); side = parts[1]; dollars = float(parts[2])
-            log_bet(side, dollars, "hourly")
-            # Task 5: manual snapshot
             _pb = get_btc_price_from_kalshi() or 0
             _mktsb, _ = get_kalshi_markets(_pb or 75000)
             _bmb = _mktsb[0] if _mktsb else None
-            _ypb = _bmb.get("yes",0.0) if _bmb else 0.0
+            _strike = _bmb["strike"] if _bmb else 0.0
+            _ypb = _bmb.get("yes", 0.0) if _bmb else 0.0
             _npb = _bmb.get("no", 0.0) if _bmb else 0.0
-            _mbb = {
-                "id": datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
-                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-                "symbol":"BTC","price_at_pred":round(_pb,2),
-                "target":_bmb["strike"] if _bmb else None,"target_prob":None,
-                "predicted_price":None,"bet":side,"reason":"manual BET","fingerprint":None,
-                "kalshi_yes_price":_ypb,"spread":round(abs(_ypb-_npb),4),"edge_pct":None,
-                "dollars":dollars,"actual_price":None,"target_hit":None,"graded":False,
-                "source":"manual","schema_version":SCHEMA_VERSION,
-            }
-            _kbb = load_kalshi_brain()
-            if "kalshi_manual_bets" not in _kbb: _kbb["kalshi_manual_bets"] = []
-            _kbb["kalshi_manual_bets"].append(_mbb)
-            save_kalshi_brain(_kbb)
+            jmb.log_manual_bet(side, dollars, _strike, _ypb, _npb, "manual BET")
             tg(f"Logged {side} ${dollars:.0f}\nText WIN <payout> or LOSS when done")
         except: tg("Format: BET YES 50")
 
@@ -1536,20 +1557,22 @@ Submit your call via the submit_direction tool (current BTC = ${btc_now:,.0f})."
         # WIN or WIN 87 (actual payout amount)
         try:
             actual_payout = float(parts[1]) if len(parts) > 1 else None
-            bet, kb = grade_bet(True, actual_payout)
+            bet = jmb.grade_manual_bet(True, actual_payout)
             if bet:
-                profit = bet.get("pnl", 0)
-                tg(f"WIN +${profit:.0f}\n{kalshi_stats_msg()}")
+                tg(f"WIN +${abs(bet['pnl']):.2f}\n{jmb.manual_stats()}")
             else: tg("No pending bet")
-        except: tg("No pending bet")
+        except Exception as e: tg(f"WIN graded but message failed: {e}")
 
     elif text == "LOSS":
-        bet, kb = grade_bet(False)
-        if bet: tg(f"LOSS -${abs(bet['pnl']):.0f}\n{kalshi_stats_msg()}")
+        bet = jmb.grade_manual_bet(False)
+        if bet: tg(f"LOSS -${abs(bet['pnl']):.2f}\n{jmb.manual_stats()}")
         else: tg("No pending bet")
 
     elif text == "KALSHI":
         tg(kalshi_stats_msg())
+
+    elif text == "MANUAL":
+        tg(jmb.manual_stats())
 
     elif text == "PATTERNS":
         patterns = load_patterns()
@@ -1610,8 +1633,68 @@ Submit your call via the submit_direction tool (current BTC = ${btc_now:,.0f})."
                     tg(f"{emoji}\nStrike:${strike:,.0f} Close:${actual:,.0f} ({pos})\nPred:{correct}/{total_p} correct\n{kalshi_stats_msg()}")
                 else:
                     tg("No active session — use WATCH first")
-            bet,kb = grade_bet(won)
         except Exception as e: tg(f"Format: CLOSE 73050 WIN\nError:{e}")
+
+    elif text.startswith("OPT"):
+        # OPT OPEN <ticker> <strategy> <strike> <premium> <expiry>
+        # OPT CLOSE <id> <WIN|LOSS> <exit_premium>
+        if len(parts) < 2:
+            tg("Options commands:\nOPT OPEN <ticker> <strategy> <strike> <premium> <expiry>\nOPT CLOSE <id> <WIN|LOSS> <exit_premium>")
+            return
+        sub = parts[1]
+        if sub == "OPEN":
+            try:
+                if len(parts) < 7:
+                    tg("Usage: OPT OPEN <ticker> <strategy> <strike> <premium> <expiry>\nExample: OPT OPEN SPY bear_call_spread 590 1.40 2026-07-18")
+                    return
+                _ticker   = parts[2]
+                _strategy = parts[3].lower()
+                _strike   = float(parts[4])
+                _premium  = float(parts[5])
+                _expiry   = parts[6]  # YYYY-MM-DD (already upper, dates are numeric so safe)
+                from datetime import date as _date
+                _dte = (_date.fromisoformat(_expiry) - _date.today()).days
+                from jarvis_memory_db import log_options_trade as _lot
+                import sqlite3 as _sq
+                _tid = _lot(ticker=_ticker, strategy=_strategy, strike=_strike,
+                            premium=_premium, dte=_dte, iv=0, score=0,
+                            catalyst=f"real fill exp {_expiry}", source="real", is_real=1)
+                # persist expiry into its own column (log_options_trade INSERT omits it)
+                _cx = _sq.connect("/root/jarvis/jarvis_memory.db", timeout=10)
+                _cx.execute("UPDATE options_trades SET expiry=? WHERE id=?", (_expiry, _tid))
+                _cx.commit(); _cx.close()
+                tg(f"OPT OPEN logged id={_tid} | {_ticker} {_strategy} ${_strike} @ ${_premium} exp {_expiry}")
+            except Exception as _e:
+                tg(f"OPT OPEN failed: {_e}\nUsage: OPT OPEN <ticker> <strategy> <strike> <premium> <expiry>")
+        elif sub == "CLOSE":
+            try:
+                if len(parts) < 5:
+                    tg("Usage: OPT CLOSE <id> <WIN|LOSS> <exit_premium>\nExample: OPT CLOSE 47 WIN 0.60")
+                    return
+                _tid        = int(parts[2])
+                _result     = parts[3]
+                _exit_prem  = float(parts[4])
+                if _result not in ("WIN", "LOSS"):
+                    tg("Result must be WIN or LOSS\nUsage: OPT CLOSE <id> <WIN|LOSS> <exit_premium>")
+                    return
+                import sqlite3 as _sq
+                _cx = _sq.connect("/root/jarvis/jarvis_memory.db", timeout=10)
+                _cx.row_factory = _sq.Row
+                _row = _cx.execute("SELECT premium, ticker, strategy FROM options_trades WHERE id=?", (_tid,)).fetchone()
+                _cx.close()
+                if not _row:
+                    tg(f"OPT CLOSE: no trade found with id={_tid}")
+                    return
+                _entry = _row["premium"]
+                _pnl   = round((_entry - _exit_prem) * 100, 2)
+                from jarvis_memory_db import close_options_trade as _cot
+                _cot(_tid, _result, _pnl, exit_premium=_exit_prem)
+                _sign = "+" if _pnl >= 0 else ""
+                tg(f"OPT CLOSE id={_tid} {_result} ${_sign}{_pnl:.2f} | computed as (entry ${_entry} - exit ${_exit_prem}) x 100")
+            except Exception as _e:
+                tg(f"OPT CLOSE failed: {_e}\nUsage: OPT CLOSE <id> <WIN|LOSS> <exit_premium>")
+        else:
+            tg("Options commands:\nOPT OPEN <ticker> <strategy> <strike> <premium> <expiry>\nOPT CLOSE <id> <WIN|LOSS> <exit_premium>")
 
     elif text == "HELP":
         tg("JARVIS MASTER COMMANDS\n"
@@ -1623,7 +1706,9 @@ Submit your call via the submit_direction tool (current BTC = ${btc_now:,.0f})."
            "WIN / LOSS — grade last bet\n"
            "KALSHI — bet stats\n"
            "PATTERNS — top learned patterns\n"
-           "STATUS — full system status")
+           "STATUS — full system status\n"
+           "OPT OPEN <ticker> <strategy> <strike> <premium> <expiry> — log real options fill\n"
+           "OPT CLOSE <id> <WIN|LOSS> <exit_premium> — close + grade options trade")
 
 # ── SELF IMPROVEMENT ──────────────────────────────────────────────────────────
 def run_self_improvement(master):
