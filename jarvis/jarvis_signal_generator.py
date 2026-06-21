@@ -39,4 +39,9 @@ if __name__ == '__main__':
     print("[SIGNAL_GENERATOR] Online — Clean BUY signals only")
     while True:
         generate_signals()
+        try:
+            import jarvis_brain
+            jarvis_brain.update_bot_heartbeat("jarvis_signal_generator")
+        except Exception:
+            pass
         time.sleep(60)
