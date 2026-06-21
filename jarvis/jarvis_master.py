@@ -1549,7 +1549,7 @@ Submit your call via the submit_direction tool (current BTC = ${btc_now:,.0f})."
             _strike = _bmb["strike"] if _bmb else 0.0
             _ypb = _bmb.get("yes", 0.0) if _bmb else 0.0
             _npb = _bmb.get("no", 0.0) if _bmb else 0.0
-            jmb.log_manual_bet(side, dollars, _strike, _ypb, _npb, "manual BET")
+            jmb.log_manual_bet(side, dollars, _strike, _ypb, _npb, "manual BET", entry_spot=round(_pb, 2))
             tg(f"Logged {side} ${dollars:.0f}\nText WIN <payout> or LOSS when done")
         except: tg("Format: BET YES 50")
 
