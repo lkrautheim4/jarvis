@@ -261,6 +261,50 @@ def select_kalshi_market(price: float, markets: list) -> dict | None:
     return None
 
 
+def _ensure_predictions_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kalshi_predictions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts              TEXT,
+            symbol          TEXT,
+            btc_price       REAL,
+            strike          REAL,
+            market          TEXT,
+            model_prob      REAL,
+            yes_price       REAL,
+            edge            REAL,
+            decision        TEXT,
+            reason          TEXT,
+            result          TEXT,
+            close_yes_price REAL
+        )
+    """)
+    conn.commit()
+
+
+def _log_prediction_cycle(symbol: str, ts: str, btc_price: float, strike: float,
+                           market: str, model_prob_str: str, yes_price: float,
+                           decision: str, reason: str) -> None:
+    """Log every prediction cycle to kalshi_predictions, including SKIPs.
+    This is measurement data — never filtered by bet decision."""
+    try:
+        raw = _parse_pct(model_prob_str)
+        model_prob = round(raw / 100.0, 4) if raw is not None else None
+        edge = round(model_prob - yes_price, 4) if model_prob is not None else None
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        _ensure_predictions_table(conn)
+        conn.execute("""
+            INSERT INTO kalshi_predictions
+                (ts, symbol, btc_price, strike, market, model_prob, yes_price, edge, decision, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (ts, symbol, btc_price, strike, market, model_prob, yes_price, edge, decision, reason))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"_log_prediction_cycle DB error: {e}")
+
+
 def _log_kalshi_pred(symbol: str, ts: str, target: float, bet: str,
                      prob: str, yes_price: float, no_price: float,
                      reason: str, market_ticker: str) -> int | None:
@@ -377,11 +421,22 @@ def ask_claude(symbol: str, price: float, target: float,
                      f"7d Avg: ${sr.get('avg',0):,.0f}") if sr else "Not enough data yet"
         memory_ctx = btc_memory.build_context()
 
-        # Determine deadline from the selected market's close time if available
+        # Determine deadline, hours remaining, and distance to strike
         if selected_market and selected_market.get("close_time"):
             deadline = selected_market["close_time"][:16].replace("T", " ") + " UTC"
+            try:
+                close_dt = datetime.fromisoformat(
+                    selected_market["close_time"].replace("Z", "+00:00"))
+                hours_remaining = max(0.1, round(
+                    (close_dt - datetime.now(timezone.utc)).total_seconds() / 3600, 2))
+            except Exception:
+                hours_remaining = 1.0
         else:
             deadline = str((datetime.now(timezone.utc).hour + 1) % 24) + ":00 UTC"
+            hours_remaining = 1.0
+
+        dist_abs = target - price
+        dist_pct = (target - price) / price * 100
 
         # Show selected market entry price context if available
         market_line = ""
@@ -395,6 +450,7 @@ def ask_claude(symbol: str, price: float, target: float,
 === CURRENT MARKET ===
 {symbol} @ ${price:,.2f}
 Kalshi target: above ${target:,.2f} by {deadline}{market_line}
+Distance to strike: ${dist_abs:+,.2f} ({dist_pct:+.2f}%) | Time remaining: {hours_remaining:.2f}h
 Prediction range: ${low:,.0f} - ${high:,.0f}
 RSI: {rsi} | 1h: {momentum.get('1h',0):+.2f}% | 24h: {momentum.get('24h',0):+.2f}% | 7d: {momentum.get('7d',0):+.2f}%
 Market mood: {mood} | BTC signal: {btc_sig}
@@ -411,11 +467,17 @@ Market mood: {mood} | BTC signal: {btc_sig}
 === YOUR TASK ===
 Based on ALL of the above — your track record, price history, momentum, S/R levels, and Kalshi pricing — make your sharpest call.
 
+CRITICAL: target_prob is NOT your general directional view on BTC. It is the probability
+that BTC will be specifically above ${target:,.2f} (currently {dist_pct:+.2f}% away) within
+{hours_remaining:.2f} hours. A large distance or short time remaining should dramatically
+lower target_prob even if BTC is trending up. Calibrate against the Kalshi yes_price —
+if the market prices YES at 15 cents, your model must have a strong specific reason to
+disagree, not just a bullish directional view.
+
 Rules (these are the exact thresholds the system enforces on your bet):
 - bet YES only if you are >=65% confident price will be ABOVE the target by the deadline
 - bet NO only if you are <=20% confident it hits (i.e. >=80% confident it MISSES)
 - otherwise bet SKIP
-- target_prob is your confidence (0-100) that price ends ABOVE the target
 - if the Kalshi YES price is mispriced vs your probability, note that edge in your reason
 - be brutally specific in one sentence; no hedging
 
@@ -574,10 +636,21 @@ def run_prediction(symbol: str):
             market_ticker=market_ticker,
             contract_expiry=selected_market["close_time"] if selected_market else "",  # Fix #3
         )
-        # Write a real-market bet row to kalshi_bets (source='auto') only when we have
-        # an actual Kalshi ticker — never write synthetic placeholders to this table.
+        # Log every cycle (YES/NO/SKIP) to kalshi_predictions for calibration measurement.
+        ts_now = datetime.now(timezone.utc).isoformat()
         if market_ticker:
-            ts_now = datetime.now(timezone.utc).isoformat()
+            _log_prediction_cycle(
+                symbol=symbol, ts=ts_now, btc_price=price,
+                strike=target, market=market_ticker,
+                model_prob_str=pred["target_prob"],
+                yes_price=yes_price,
+                decision=pred["bet"],
+                reason=pred["reason"],
+            )
+
+        # Write a real-market bet row to kalshi_bets (source='auto') only when we have
+        # an actual Kalshi ticker and an actual bet — never write SKIP or synthetic rows.
+        if market_ticker:
             row_id = _log_kalshi_pred(
                 symbol=symbol, ts=ts_now, target=target, bet=pred["bet"],
                 prob=pred["target_prob"], yes_price=yes_price, no_price=no_price,

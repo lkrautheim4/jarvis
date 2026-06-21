@@ -52,10 +52,21 @@ def _compute_pnl(bet: str, market_result: str, yes_price: float, no_price: float
     return "LOSS", 0.0
 
 
+def _ensure_close_price_columns(conn):
+    """Add close_yes_price to kalshi_bets and kalshi_predictions if not present."""
+    for table in ("kalshi_bets", "kalshi_predictions"):
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN close_yes_price REAL")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
+
+
 def grade_bets():
     conn = get_db()
     try:
         graded_at = datetime.now(ZoneInfo("America/New_York")).isoformat()
+        _ensure_close_price_columns(conn)
 
         # ── Path 1: API settlement for real-market rows (source='auto', has ticker) ──
         api_candidates = conn.execute("""
@@ -72,10 +83,20 @@ def grade_bets():
             if not market_result:
                 continue   # not yet settled — skip
             outcome, pnl = _compute_pnl(row["bet"], market_result, row["yes_price"], row["no_price"])
+            close_yes = 1.0 if market_result == "yes" else 0.0
             conn.execute(
-                "UPDATE kalshi_bets SET result=?, pnl=?, graded_at=? WHERE id=?",
-                (outcome, pnl, graded_at, row["id"])
+                "UPDATE kalshi_bets SET result=?, pnl=?, graded_at=?, close_yes_price=? WHERE id=?",
+                (outcome, pnl, graded_at, close_yes, row["id"])
             )
+            # Mirror result into kalshi_predictions for the same market
+            try:
+                conn.execute("""
+                    UPDATE kalshi_predictions
+                    SET result=?, close_yes_price=?
+                    WHERE market=? AND result IS NULL
+                """, (outcome, close_yes, row["market"]))
+            except Exception:
+                pass  # table may not exist yet if no cycles logged
             log.info(f"[API] Graded id={row['id']} {row['market']} bet={row['bet']}"
                      f" → {market_result.upper()} {outcome} pnl={pnl:+.4f}")
             api_graded += 1
