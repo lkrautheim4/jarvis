@@ -2,7 +2,7 @@
 
 ## Current git commit
 ```
-376a3e8 Wire heartbeat into jarvis_signal_generator
+1b624de Add Kalshi measurement pipeline: prediction logging, calibration report
 ```
 
 ## Running services — 15 processes, 12 with active heartbeats
@@ -56,14 +56,45 @@ jarvis_intel, jarvis_webull_alerts, jarvis_range_detector, jarvis_capital, jarvi
 - manual_stats() isolated to source='manual_user' only
 - Zero hardcoded secrets — grep confirmed across all .py and .sh
 
+## What was measured today (Kalshi 18.2% WR investigation)
+
+Historical kalshi_bets (32 graded auto bets, 6W/26L):
+
+| Market yes_price | Bets | W | L | WR |
+|---|---|---|---|---|
+| 0.00–0.10 | 4 | 0 | 4 | 0% |
+| 0.10–0.20 | 6 | 0 | 6 | 0% |
+| 0.20–0.30 | 5 | 0 | 5 | 0% |
+| 0.30–0.40 | 4 | 1 | 3 | 25% |
+| 0.40–0.50 | 3 | 0 | 3 | 0% |
+| >=0.50    | 4 | 2 | 2 | 50% |
+
+Root cause: model outputs a directional BTC signal, not a strike-specific probability.
+When market prices YES at <0.30 (strike far from BTC), bot bets YES anyway because
+model says "bullish" — 0-for-15 in that bucket. Edge gate fires hardest on the worst bets.
+
+## What is still unknown
+
+- **Does the prompt fix help?** New prompt now shows distance-to-strike, hours remaining,
+  and explicit grounding instruction. No data yet — `kalshi_predictions` table starts
+  filling on the next prediction cycle (hourly). Check tomorrow.
+- **SKIP rate vs bet rate** — with better calibration, expect more SKIPs. Unmeasured.
+- **Whether model_prob now correlates with win rate** — needs ~20 cycles to evaluate.
+  Run `python3 kalshi_calibration.py` to check.
+
 ## Known issues
 
 1. **kalshi_bets row 322** — entry_spot=NULL (pre-fix smoke test row). Graded LOSS. Harmless.
-2. **Auto Kalshi win rate: 18.2% on 101 bets** — low. Not investigated today.
-3. **Old stack rows in bot_heartbeats** — jarvis_cascade/briefing/etc. stale since June 1–15.
+2. **Old stack rows in bot_heartbeats** — jarvis_cascade/briefing/etc. stale since June 1–15.
    Noise only, not harmful.
 
 ## Recommended next task
 
-Investigate why auto Kalshi win rate is 18.2% on 101 bets. Check model edge,
-market selection, and whether lenny_predictions is betting into unfavorable spreads.
+After 24–48h of data accumulates in `kalshi_predictions`, run:
+```
+python3 kalshi_calibration.py
+```
+Compare model_prob calibration and edge-vs-WR buckets. If model_prob still doesn't
+correlate with outcomes, the next fix is a yes_price floor (e.g., only YES when
+yes_price ≥ 0.30). Do not implement the floor until calibration data shows
+whether the prompt change alone improved correlation.
