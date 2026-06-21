@@ -32,6 +32,11 @@ def write_heartbeat(conn):
     ts = datetime.now(ZoneInfo("America/New_York")).isoformat()
     open_count = conn.execute("SELECT COUNT(*) FROM options_trades WHERE status='paper'").fetchone()[0]
     set_brain(conn, "options_brain_heartbeat", {"ts": ts, "alive": True, "open_positions": open_count})
+    try:
+        import jarvis_brain
+        jarvis_brain.update_bot_heartbeat("jarvis_options_brain")
+    except Exception:
+        pass
 
 def check_dedup(conn, ticker, strategy, strike):
     cutoff = datetime.now(ZoneInfo("America/New_York")) - timedelta(seconds=120)
