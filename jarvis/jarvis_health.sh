@@ -21,12 +21,12 @@ export HEALTH_MSG="JARVIS HEALTH ALERT: ${ALIVE}/${#EXPECTED[@]} up. DOWN: ${DEA
 python3 <<'PYEOF'
 import os, sys
 sys.path.insert(0, '/root/jarvis')
-from jarvis_secrets import TG_TOKEN_TRADER
+from jarvis_secrets import TG_TOKEN_TRADER, TG_CHAT_ID
 import requests
 try:
     requests.post(
         f'https://api.telegram.org/bot{TG_TOKEN_TRADER}/sendMessage',
-        json={'chat_id': '7534553840', 'text': os.environ['HEALTH_MSG']},
+        json={'chat_id': TG_CHAT_ID, 'text': os.environ['HEALTH_MSG']},
         timeout=5)
 except Exception as e:
     print(f'Health alert failed: {e}', file=sys.stderr)
