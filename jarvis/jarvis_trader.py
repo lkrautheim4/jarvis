@@ -14,7 +14,7 @@ ALPACA_KEY    = __import__("jarvis_secrets").ALPACA_PAPER_KEY
 ALPACA_SECRET = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
 ALPACA_BASE   = "https://paper-api.alpaca.markets"
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_TRADER
-TELEGRAM_CHAT  = "7534553840"
+TELEGRAM_CHAT  = __import__("jarvis_secrets").TG_CHAT_ID
 from jarvis_secrets import CLAUDE_API_KEY
 
 CRYPTO_ASSETS = ["BTC", "ETH", "SOL", "AVAX"]

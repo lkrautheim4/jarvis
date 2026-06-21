@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger('JARVIS-L5')
 
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_INTEL
-TELEGRAM_CHAT  = "7534553840"
+TELEGRAM_CHAT  = __import__("jarvis_secrets").TG_CHAT_ID
 from jarvis_secrets import CLAUDE_API_KEY
 INTEL_FILE     = "/root/jarvis/jarvis_intel.json"
 LEVEL5_FILE    = "/root/jarvis/jarvis_level5.json"

@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 PAPER_TRADES_FILE = '/root/jarvis/paper_trades.json'
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_INTEL
-TELEGRAM_CHAT = "7534553840"
+TELEGRAM_CHAT = __import__("jarvis_secrets").TG_CHAT_ID
 
 def tg(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT:

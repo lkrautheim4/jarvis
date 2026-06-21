@@ -15,7 +15,7 @@ log = logging.getLogger("JARVIS_EARNINGS")
 EARNINGS_FILE = "/root/jarvis/jarvis_earnings.json"
 BRAIN_FILE    = "/root/jarvis/jarvis_central_brain.json"
 TG_TOKEN      = __import__("jarvis_secrets").TG_TOKEN_TRADER
-CHAT_ID       = "7534553840"
+CHAT_ID       = __import__("jarvis_secrets").TG_CHAT_ID
 INTERVAL      = 21600  # 6 hours
 
 # All tickers we care about across all bots

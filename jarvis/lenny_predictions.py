@@ -18,7 +18,7 @@ log = logging.getLogger("lenny_predictions")
 # ── Config ──────────────────────────────────────────────────────────────────
 from jarvis_secrets import CLAUDE_API_KEY, TG_TOKEN_LENNY
 TG_TOKEN        = TG_TOKEN_LENNY   # @Lenny_predictions_bot — stored in secrets.json
-TG_CHAT_ID      = "7534553840"
+TG_CHAT_ID      = __import__("jarvis_secrets").TG_CHAT_ID
 KALSHI_API_KEY  = "f3c367c6-92fe-455f-ae54-2dcef68d07a7"
 DB_PATH         = "/root/jarvis/jarvis_memory.db"
 

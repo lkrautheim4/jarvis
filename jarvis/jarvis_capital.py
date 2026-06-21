@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("JARVIS_CAPITAL")
 
 TG_TOKEN = __import__("jarvis_secrets").TG_TOKEN_TRADER
-CHAT_ID  = "7534553840"
+CHAT_ID  = __import__("jarvis_secrets").TG_CHAT_ID
 CAPITAL_FILE = "/root/jarvis/jarvis_capital.json"
 INTERVAL = 3600  # hourly
 

@@ -33,7 +33,7 @@ from jarvis_secrets import ALPACA_PAPER_KEY as ALPACA_KEY, ALPACA_PAPER_SECRET a
 ALPACA_BASE    = "https://paper-api.alpaca.markets"
 TG_TRADER      = __import__("jarvis_secrets").TG_TOKEN_TRADER
 TG_PRED        = __import__("jarvis_secrets").TG_TOKEN_PRED
-CHAT_ID        = "7534553840"
+CHAT_ID        = __import__("jarvis_secrets").TG_CHAT_ID
 MEMORY_FILE    = "/root/jarvis/btc_memory.json"
 BRAIN_FILE         = "/root/jarvis/kalshi_brain.json"
 SKIPS_ARCHIVE_FILE = "/root/jarvis/kalshi_skips_archive.json"

@@ -10,7 +10,7 @@ import jarvis_brain
 
 # ─── CONFIG ───────────────────────────────────────────────
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_TRADER
-TELEGRAM_CHAT  = "7534553840"
+TELEGRAM_CHAT  = __import__("jarvis_secrets").TG_CHAT_ID
 from jarvis_secrets import CLAUDE_API_KEY
 KALSHI_API_KEY = "67dbc604-41b3-4cf6-bc11-df957dc2ce70"
 KALSHI_BASE    = "https://trading-api.kalshi.com/trade-api/v2"

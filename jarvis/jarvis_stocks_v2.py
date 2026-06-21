@@ -21,7 +21,7 @@ ALPACA_SECRET  = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
 ALPACA_BASE    = "https://paper-api.alpaca.markets"
 ALPACA_DATA    = "https://data.alpaca.markets"
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_INTEL
-TELEGRAM_CHAT  = "7534553840"
+TELEGRAM_CHAT  = __import__("jarvis_secrets").TG_CHAT_ID
 from jarvis_secrets import CLAUDE_API_KEY
 # Own file — jarvis_stocks_brain.json is the rich learning-brain schema owned by
 # jarvis_stocks.py(v1)/jarvis_intelligence (total_trades/total_pnl/…), read by

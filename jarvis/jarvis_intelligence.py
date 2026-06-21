@@ -19,7 +19,7 @@ except Exception:
 # CONFIG
 # ─────────────────────────────────────────
 TELEGRAM_TOKEN  = __import__("jarvis_secrets").TG_TOKEN_TRADER
-TELEGRAM_CHAT   = "7534553840"
+TELEGRAM_CHAT   = __import__("jarvis_secrets").TG_CHAT_ID
 from jarvis_secrets import CLAUDE_API_KEY
 
 ALPHA_BRAIN     = "jarvis_alpha_brain.json"

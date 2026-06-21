@@ -21,7 +21,7 @@ ALPACA_SECRET = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
 ALPACA_BASE   = "https://paper-api.alpaca.markets"
 ALPACA_DATA   = "https://data.alpaca.markets"
 TG_TOKEN      = __import__("jarvis_secrets").TG_TOKEN_TRADER
-CHAT_ID       = "7534553840"
+CHAT_ID       = __import__("jarvis_secrets").TG_CHAT_ID
 BRAIN_FILE    = "/root/jarvis/jarvis_premium_brain.json"
 INTERVAL      = 1800  # 30 min during market hours
 

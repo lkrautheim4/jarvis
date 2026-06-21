@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_TRADER
 ALPACA_KEY     = __import__("jarvis_secrets").ALPACA_PAPER_KEY
 ALPACA_SECRET  = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
-TELEGRAM_CHAT  = "7534553840"
+TELEGRAM_CHAT  = __import__("jarvis_secrets").TG_CHAT_ID
 JARVIS_DIR     = "/root/jarvis"
 
 # ── Bot registry ─────────────────────────────────────────────────────────────
