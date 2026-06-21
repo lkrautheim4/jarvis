@@ -7,7 +7,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 DB_PATH        = "/root/jarvis/jarvis_memory.db"
-KALSHI_API_KEY = "f3c367c6-92fe-455f-ae54-2dcef68d07a7"
+KALSHI_API_KEY = __import__("jarvis_secrets").KALSHI_API_KEY
 KALSHI_BASE    = "https://api.elections.kalshi.com/trade-api/v2"
 
 
