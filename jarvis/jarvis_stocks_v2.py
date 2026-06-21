@@ -39,10 +39,11 @@ BUY_RSI_STRONG  = 28
 BUY_RSI_NORMAL  = 35
 BUY_RSI_MICRO   = 45
 SELL_RSI_HIGH   = 62
-PROFIT_MICRO    = 0.5
-PROFIT_SWING    = 2.0
-PROFIT_BREAKOUT = 1.5
-STOP_LOSS       = 1.2
+PROFIT_MICRO    = 2.0
+PROFIT_SWING    = 4.0
+PROFIT_BREAKOUT = 3.0
+STOP_LOSS       = 1.5
+DRY_RUN_EXITS   = True
 TRAIL_STEP      = 0.3
 MIN_HOLD_MICRO  = 8
 MIN_HOLD_SWING  = 30
@@ -271,9 +272,31 @@ def save_memory(mem):
     with open(MEMORY_FILE, "w") as f: json.dump(mem, f, indent=2)
 
 # ── TRADING ───────────────────────────────────────────────────────────────────
+def has_open_order(symbol):
+    """True if an order for this symbol is already working (dedup guard)."""
+    orders = alpaca("GET", "/v2/orders?status=open") or []
+    return any(o.get("symbol") == symbol for o in orders)
+
 def place_order(symbol, qty, side):
+    # Guard 1: equity bot only — never crypto/forex pairs
+    if "/" in symbol or symbol.endswith("USD"):
+        log.warning(f"REJECT {symbol}: not an equity symbol (crypto/pair)")
+        return None
+    # Guard 2: never submit a None/zero/garbage qty
+    try:
+        q = int(qty)
+    except (TypeError, ValueError):
+        log.warning(f"REJECT {symbol}: bad qty {qty!r}")
+        return None
+    if q < 1:
+        log.warning(f"REJECT {symbol}: qty {q} < 1")
+        return None
+    # Guard 3: dedup — don't stack a second order on the same symbol
+    if has_open_order(symbol):
+        log.info(f"SKIP {symbol}: open order already working")
+        return None
     return alpaca("POST", "/v2/orders", {
-        "symbol": symbol, "qty": str(qty), "side": side,
+        "symbol": symbol, "qty": str(q), "side": side,
         "type": "market", "time_in_force": "day"
     })
 
@@ -281,23 +304,55 @@ def close_position(symbol):
     import urllib.parse
     return alpaca("DELETE", f"/v2/positions/{urllib.parse.quote(symbol)}")
 
+def _tier_target(mem, sym):
+    """Look up the entry tier for this symbol to pick the right profit target."""
+    for t in reversed(mem.get("trades", [])):
+        if t.get("symbol") == sym and t.get("tier"):
+            tier = t["tier"]
+            if tier == "STRONG_BUY":  return PROFIT_SWING
+            if tier == "MICRO_BUY":   return PROFIT_MICRO
+            return PROFIT_BREAKOUT
+    return PROFIT_MICRO  # default to tightest target if tier unknown
+
 def check_exits(mem, positions):
     for pos in positions:
         sym = pos.get("symbol", "")
-        if "/" in sym: continue  # skip options
+        if "/" in sym: continue  # skip options/crypto
         pnl_pct = float(pos.get("unrealized_plpc", 0)) * 100
         pnl_usd = float(pos.get("unrealized_pl", 0))
-        if pnl_pct >= PROFIT_MICRO or pnl_pct <= -STOP_LOSS:
-            reason = f"Profit +{pnl_pct:.2f}%" if pnl_pct > 0 else f"Stop {pnl_pct:.2f}%"
-            if close_position(sym):
-                mem["stats"]["pnl"] = round(mem["stats"]["pnl"] + pnl_usd, 2)
-                mem["daily_loss"] = round(mem.get("daily_loss", 0) + pnl_usd, 2)
-                if pnl_usd > 0: mem["stats"]["wins"] += 1
-                else: mem["stats"]["losses"] += 1
-                save_memory(mem)
-                emoji = "✅" if pnl_usd > 0 else "🔴"
-                tg(f"{emoji} STOCKS: {sym} closed\n{reason}\nP&L: ${pnl_usd:+.2f}\nTotal: ${mem['stats']['pnl']:+.2f}")
-                log.info(f"Closed {sym}: {reason} ${pnl_usd:+.2f}")
+        target  = _tier_target(mem, sym)
+
+        # Optional RSI-recovery exit: sell into strength once bounce is realized
+        rsi_exit = False
+        try:
+            a = analyze_ticker(sym)
+            if a and a.get("rsi", 0) >= SELL_RSI_HIGH and pnl_pct > 0:
+                rsi_exit = True
+        except Exception:
+            pass
+
+        hit_target = pnl_pct >= target
+        hit_stop   = pnl_pct <= -STOP_LOSS
+        if not (hit_target or hit_stop or rsi_exit):
+            continue
+
+        if hit_stop:        reason = f"Stop {pnl_pct:.2f}%"
+        elif rsi_exit:      reason = f"RSI-exit +{pnl_pct:.2f}% (RSI>{SELL_RSI_HIGH})"
+        else:               reason = f"Target +{pnl_pct:.2f}% (tgt {target}%)"
+
+        if DRY_RUN_EXITS:
+            log.info(f"[DRY-RUN] WOULD CLOSE {sym}: {reason} ${pnl_usd:+.2f}")
+            continue
+
+        if close_position(sym):
+            mem["stats"]["pnl"] = round(mem["stats"]["pnl"] + pnl_usd, 2)
+            mem["daily_loss"] = round(mem.get("daily_loss", 0) + pnl_usd, 2)
+            if pnl_usd > 0: mem["stats"]["wins"] += 1
+            else: mem["stats"]["losses"] += 1
+            save_memory(mem)
+            emoji = "✅" if pnl_usd > 0 else "🔴"
+            tg(f"{emoji} STOCKS: {sym} closed\n{reason}\nP&L: ${pnl_usd:+.2f}\nTotal: ${mem['stats']['pnl']:+.2f}")
+            log.info(f"Closed {sym}: {reason} ${pnl_usd:+.2f}")
 
 def run_cycle(mem):
     if not is_market_open():
@@ -363,6 +418,7 @@ def run_cycle(mem):
         if result:
             mem["stats"]["total"] += 1
             stock_positions.append({"symbol": symbol})
+            mem.setdefault("trades", []).append({"symbol": symbol, "tier": signal, "ts": datetime.now().isoformat()})
             save_memory(mem)
             tg(f"🎯 STOCKS: BUY {symbol}\n@ ${price:.2f} qty:{qty}\nRSI:{rsi} Vol:{vol}x {signal}\nConf:{conf}")
             log.info(f"Bought {symbol} @ ${price:.2f} qty={qty}")

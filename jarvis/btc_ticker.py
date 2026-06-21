@@ -1,12 +1,19 @@
-import time, json, requests, logging
-from datetime import datetime
+import time, json, requests, logging, sqlite3
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-LOG = "/root/jarvis/jarvis_btc.log"
+LOG = "/root/jarvis/btc_ticker.log"
 MEMORY = "/root/jarvis/btc_memory.json"
+DB_PATH = "/root/jarvis/jarvis_memory.db"
+
 logging.basicConfig(filename=LOG, level=logging.INFO, format="%(asctime)s %(message)s")
 
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 def fetch_btc():
-    # CoinGecko free tier is heavily rate-limited; fall back to Coinbase on any failure
     try:
         r = requests.get(
             "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
@@ -15,7 +22,7 @@ def fetch_btc():
         data = r.json()
         if "bitcoin" in data:
             return data["bitcoin"]["usd"]
-    except Exception:
+    except:
         pass
     r = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=10)
     return float(r.json()["data"]["amount"])
@@ -29,28 +36,85 @@ def calc_rsi(prices, period=14):
         gains.append(max(d, 0)); losses.append(max(-d, 0))
     avg_gain = sum(gains[-period:]) / period
     avg_loss = sum(losses[-period:]) / period
-    if avg_loss == 0: return 100.0
-    rs = avg_gain / avg_loss
-    return round(100 - (100 / (1 + rs)), 1)
+    rs = avg_gain / (avg_loss + 0.0001)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return rsi
 
-def write_tick(price):
+def update_btc_brain(conn, price, rsi):
     try:
-        with open(MEMORY, 'r') as f:
-            data = json.load(f)
-    except:
-        data = {"prices": []}
-    recent = [p["price"] for p in data["prices"][-20:]] + [price]
-    rsi = calc_rsi(recent)
-    data["prices"].append({"ts": datetime.now().isoformat(), "price": price, "rsi": rsi})
-    data["prices"] = data["prices"][-100:]
-    with open(MEMORY, 'w') as f:
-        json.dump(data, f)
-    logging.info(f"BTC tick: ${price:,.0f} RSI:{rsi}")
-
-while True:
-    try:
-        price = fetch_btc()
-        write_tick(price)
+        conn.execute("INSERT OR REPLACE INTO brain (key, value) VALUES (?, ?)", ("btc_price", price))
+        conn.execute("INSERT OR REPLACE INTO brain (key, value) VALUES (?, ?)", ("btc_rsi", rsi))
+        conn.commit()
+        logging.info(f"Updated BTC in brain: ${price:,.0f}, RSI {rsi:.1f}")
     except Exception as e:
-        logging.error(f"Fetch error: {e}")
-    time.sleep(3600)
+        logging.error(f"Error updating BTC brain: {e}")
+
+def log_btc_tick(conn, price, rsi):
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    date = ts[:10]
+    hour = int(ts[11:13])
+    try:
+        conn.execute("""
+            INSERT INTO btc_ticks (ts, price, rsi, momentum_1h, momentum_24h, momentum_7d)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (ts, price, rsi, 0.0, 0.0, 0.0))
+        conn.commit()
+        logging.info(f"Logged BTC tick to db: ${price:,.0f}, RSI {rsi:.1f}")
+    except Exception as e:
+        logging.error(f"Error logging BTC tick: {e}")
+
+def update_btc_momentum(conn):
+    conn.execute("""
+        WITH recent AS (
+            SELECT price FROM btc_ticks ORDER BY ts DESC LIMIT 1
+        )
+        UPDATE btc_ticks
+        SET momentum_1h = 100.0 * (
+            price - (SELECT avg(price) FROM btc_ticks WHERE ts > datetime('now','-1 hours'))
+        ) / (SELECT price FROM recent)
+    """)
+    conn.execute("""
+        WITH recent AS (
+            SELECT price FROM btc_ticks ORDER BY ts DESC LIMIT 1
+        )
+        UPDATE btc_ticks
+        SET momentum_24h = 100.0 * (
+            price - (SELECT avg(price) FROM btc_ticks WHERE ts > datetime('now','-24 hours'))
+        ) / (SELECT price FROM recent)
+    """)
+    conn.execute("""
+        WITH recent AS (
+            SELECT price FROM btc_ticks ORDER BY ts DESC LIMIT 1
+        )
+        UPDATE btc_ticks
+        SET momentum_7d = 100.0 * (
+            price - (SELECT avg(price) FROM btc_ticks WHERE ts > datetime('now','-7 days'))
+        ) / (SELECT price FROM recent)
+    """)
+
+def main():
+    while True:
+        logging.info("BTC ticker awake")
+        conn = get_db()
+        try:
+            price = fetch_btc()
+            recent_prices = [
+                row['price'] for row in conn.execute(
+                    "SELECT price FROM btc_ticks ORDER BY ts DESC LIMIT 336"
+                )
+            ]
+            recent_prices.insert(0, price)
+            rsi = calc_rsi(recent_prices)
+
+            update_btc_brain(conn, price, rsi)
+            log_btc_tick(conn, price, rsi)
+            update_btc_momentum(conn)
+
+        except Exception as e:
+            logging.error(f"BTC tick error: {e}")
+        finally:
+            conn.close()
+            time.sleep(300)
+
+if __name__ == "__main__":
+    main()

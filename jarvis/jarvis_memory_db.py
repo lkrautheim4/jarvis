@@ -236,7 +236,7 @@ def get_recent_kalshi_bets(limit=10) -> list:
 
 def log_options_trade(ticker, strategy, strike, premium, dte, iv, score,
                       contract_symbol=None, stock_price=None, regime=None, fear_greed=None, vix=None,
-                      btc_signal=None, catalyst="", theta_per_day=0, source=None):
+                      btc_signal=None, catalyst="", theta_per_day=0, source=None, is_real=0):
     ts = datetime.now().isoformat()
     cutoff = (datetime.now() - timedelta(seconds=60)).isoformat()
     with get_conn() as conn:
@@ -249,10 +249,12 @@ def log_options_trade(ticker, strategy, strike, premium, dte, iv, score,
             return existing["id"]
         cur = conn.execute("""
             INSERT INTO options_trades(ts,ticker,strategy,strike,premium,dte,iv,score,
-            contract_symbol,stock_price,regime,fear_greed,vix,btc_signal,catalyst,theta_per_day)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            contract_symbol,stock_price,regime,fear_greed,vix,btc_signal,catalyst,theta_per_day,
+            source,is_real)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (ts, ticker, strategy, strike, premium, dte, iv, score,
-              contract_symbol, stock_price, regime, fear_greed, vix, btc_signal, catalyst, theta_per_day))
+              contract_symbol, stock_price, regime, fear_greed, vix, btc_signal, catalyst, theta_per_day,
+              source, is_real))
         return cur.lastrowid
 
 def close_options_trade(trade_id, result, pnl, exit_premium=None, exit_date=None):

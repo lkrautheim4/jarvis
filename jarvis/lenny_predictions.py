@@ -221,7 +221,7 @@ def get_kalshi_odds(symbol: str) -> list:
     try:
         r = requests.get(
             "https://api.elections.kalshi.com/trade-api/v2/markets",
-            params={"status": "open", "series_ticker": "KXBTCD", "limit": 20},
+            params={"status": "open", "series_ticker": "KXBTCD", "limit": 100},
             headers={"Authorization": f"Bearer {KALSHI_API_KEY}"},
             timeout=10
         )
@@ -527,6 +527,11 @@ def run_prediction(symbol: str):
 
     # 3. Fetch real Kalshi markets once (used for both target selection and the Claude prompt)
     kalshi_markets = get_kalshi_odds(symbol)
+    # Fix #2: snapshot closing_implied_prob for any prediction entering its expiry window
+    if kalshi_markets:
+        snapped = btc_memory.check_closing_snapshots({m["ticker"]: m for m in kalshi_markets})
+        if snapped:
+            log.info(f"Snapshotted closing_implied_prob for {snapped} prediction(s)")
     selected_market = select_kalshi_market(price, kalshi_markets)
 
     if selected_market:
@@ -564,7 +569,10 @@ def run_prediction(symbol: str):
         btc_memory.log_prediction(
             symbol, price, target, low, high,
             pred["target_prob"], pred["predicted_price"],
-            pred["range_prob"],  pred["bet"], pred["reason"]
+            pred["range_prob"],  pred["bet"], pred["reason"],
+            entry_implied_prob=yes_price,                                          # Fix #1
+            market_ticker=market_ticker,
+            contract_expiry=selected_market["close_time"] if selected_market else "",  # Fix #3
         )
         # Write a real-market bet row to kalshi_bets (source='auto') only when we have
         # an actual Kalshi ticker — never write synthetic placeholders to this table.

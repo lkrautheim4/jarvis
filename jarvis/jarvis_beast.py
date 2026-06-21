@@ -539,6 +539,7 @@ def main():
                 _macro = _json.load(open("/root/jarvis/jarvis_macro.json"))
                 import jarvis_memory_db as _memdb
                 _regime = _memdb.get_regime("UNKNOWN")  # canonical regime from jarvis_memory.db
+                ctx = get_context(); ctx.set_context("macro_regime", regime, "jarvis_beast")
                 _cb = _json.load(open("/root/jarvis/jarvis_central_brain.json"))
                 _risk = _cb.get("risk_level","NORMAL")
             except:

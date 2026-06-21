@@ -5,6 +5,7 @@ Fixes: Reuters RSS dead → replaced with working feeds
 Upgrades: CryptoPanic, Yahoo Finance RSS, Finnhub news, better fallbacks
 """
 import json, time, requests, os, re
+from jarvis_secrets import TG_TOKEN_TRADER as TG_TOKEN
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
@@ -73,7 +74,7 @@ NEWS_ALERT_COOLDOWN_SECS = 4 * 3600       # 4 hours
 ARTICLE_MAX_AGE = timedelta(hours=48)     # skip articles older than 48h
 
 NEWS_POLL  = 300
-SECTOR_POLL = 900
+SECTOR_POLL = 10800
 FUND_POLL  = 21600
 CORR_POLL  = 600
 MACRO_POLL = 3600
@@ -432,11 +433,11 @@ def main():
     tg("🧠 Jarvis Level 5 online. Fixed news feeds active.")
     data = load_level5()
 
-    last_news    = 0
-    last_sector  = 0
-    last_fund    = 0
-    last_corr    = 0
-    last_macro   = 0
+    last_news    = time.time()
+    last_sector  = time.time()
+    last_fund    = time.time()
+    last_corr    = time.time()
+    last_macro   = time.time()
     last_brief   = datetime.now().date() - timedelta(days=1)
 
     while True:

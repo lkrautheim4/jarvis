@@ -8,6 +8,7 @@ Sends all intelligence to Telegram and saves to brain files
 """
 
 import json, time, requests, os, math, re
+from jarvis_context import get_context
 from datetime import datetime, timedelta
 try:
     import jarvis_brain as _news_brain   # optional: feeds central-brain hot tickers + market mood
@@ -52,6 +53,9 @@ log = logging.getLogger('JARVIS-INTEL')
 # ─────────────────────────────────────────
 # TELEGRAM
 # ─────────────────────────────────────────
+import jarvis_insider
+
+
 def tg(msg, token=TELEGRAM_TOKEN):
     clean=str(msg)[:4000]
     try:
@@ -826,6 +830,16 @@ Write as Jarvis speaking to Lenny."""
 # ─────────────────────────────────────────
 # LEVEL 3E — CRYPTO SENTIMENT MONITOR
 # ─────────────────────────────────────────
+def should_alert(intel, key, state):
+    """Return True only when `state` differs from the last recorded state for `key`.
+    Suppresses repeat alerts while a condition persists; records every transition."""
+    if intel.get("alert_states", {}).get(key) == state:
+        return False
+    intel.setdefault("alert_states", {})[key] = state
+    save_intel(intel)
+    return True
+
+
 def monitor_crypto_sentiment(intel):
     """Monitor Fear & Greed + crypto-specific signals"""
     log.info("--- CRYPTO SENTIMENT ---")
@@ -842,11 +856,19 @@ def monitor_crypto_sentiment(intel):
 
                 log.info(f"Fear & Greed: {current} ({label}) — {trend} vs 7 days ago ({week_ago})")
 
-                # Alert on extreme readings
+                # Classify into a band; alert ONLY when the band CHANGES (state-change gate)
                 if current <= 15:
-                    tg(f"EXTREME FEAR ALERT\nFear & Greed: {current} ({label})\nHistorically: best time to buy crypto\nWeek ago: {week_ago} — {trend}")
+                    band = "extreme_fear"
                 elif current >= 85:
-                    tg(f"EXTREME GREED ALERT\nFear & Greed: {current} ({label})\nHistorically: consider reducing exposure\nWeek ago: {week_ago} — {trend}")
+                    band = "extreme_greed"
+                else:
+                    band = "neutral"
+                if should_alert(intel, "crypto_fng_band", band):
+                    if band == "extreme_fear":
+                        tg(f"EXTREME FEAR ALERT\nFear & Greed: {current} ({label})\nHistorically: best time to buy crypto\nWeek ago: {week_ago} — {trend}")
+                    elif band == "extreme_greed":
+                        tg(f"EXTREME GREED ALERT\nFear & Greed: {current} ({label})\nHistorically: consider reducing exposure\nWeek ago: {week_ago} — {trend}")
+                    # band == "neutral": records the exit from extreme, sends nothing
 
         # BTC dominance from CoinGecko
         r2 = requests.get(
@@ -1032,7 +1054,7 @@ def main():
                 scan_options_flow(intel)
 
             elif text == "INSIDER":
-                fetch_insider_filings(intel)
+                jarvis_insider.scan_and_alert(tg, WATCH_TICKERS)
 
             elif text == "IMPROVE":
                 run_self_improvement(intel)
@@ -1055,7 +1077,7 @@ def main():
         # INSIDER FILINGS — every 15 minutes
         if now - last_insider >= INSIDER_POLL:
             last_insider = now
-            fetch_insider_filings(intel)
+            jarvis_insider.scan_and_alert(tg, WATCH_TICKERS)
 
         # EARNINGS CALENDAR — once per hour
         if now - last_earnings >= EARNINGS_POLL:

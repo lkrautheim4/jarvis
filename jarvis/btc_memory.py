@@ -23,8 +23,20 @@ def _load() -> dict:
         try:
             with open(MEMORY_FILE) as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            # NEVER silently return empty — that overwrites real history on next save.
+            # Try the most recent backup before giving up.
+            import glob
+            bks = sorted(glob.glob(MEMORY_FILE + ".bak_*"))
+            for bk in reversed(bks):
+                try:
+                    with open(bk) as f:
+                        data = json.load(f)
+                    print(f"[BTC_MEMORY] WARN: main file unreadable ({e}); recovered from {bk}")
+                    return data
+                except Exception:
+                    continue
+            raise RuntimeError(f"btc_memory.json unreadable and no backup recovered: {e}")
     return {
         "prices": [],
         "predictions": [],
@@ -46,11 +58,38 @@ def _load() -> dict:
 
 
 def _save(mem: dict):
+    import glob, time, shutil
+    # Shrink guard: refuse to overwrite a much larger prediction history with a tiny one
+    if os.path.exists(MEMORY_FILE):
+        try:
+            with open(MEMORY_FILE) as f:
+                disk = json.load(f)
+            disk_n = len(disk.get("predictions", []))
+            new_n  = len(mem.get("predictions", []))
+            if disk_n >= 10 and new_n < disk_n * 0.5:
+                bad = MEMORY_FILE + f".BLOCKED_{int(time.time())}"
+                with open(bad, "w") as f:
+                    json.dump(mem, f, indent=2)
+                raise RuntimeError(
+                    f"_save BLOCKED: prediction count would drop {disk_n}->{new_n}. "
+                    f"Attempt saved to {bad} for inspection; disk file untouched."
+                )
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass  # disk unreadable; let the write proceed to restore a valid file
+    # Rolling backup before write (keep last 10)
+    if os.path.exists(MEMORY_FILE):
+        shutil.copy(MEMORY_FILE, MEMORY_FILE + f".bak_{int(time.time())}")
+        bks = sorted(glob.glob(MEMORY_FILE + ".bak_*"))
+        for old in bks[:-10]:
+            try: os.remove(old)
+            except: pass
     # Trim history to max sizes
     mem["prices"]      = mem["prices"][-MAX_PRICE_HISTORY:]
     mem["predictions"] = mem["predictions"][-MAX_PREDICTIONS:]
-    with open(MEMORY_FILE, "w") as f:
+    tmp = MEMORY_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(mem, f, indent=2)
+    os.replace(tmp, MEMORY_FILE)  # atomic — no half-written file on crash
 
 
 # ─────────────────────────────────────────────
@@ -105,30 +144,37 @@ def _update_daily_summary(mem: dict, entry: dict):
 def log_prediction(symbol: str, price: float, target: float,
                    low: float, high: float,
                    target_prob: str, predicted_price: str,
-                   range_prob: str, bet: str, reason: str) -> str:
+                   range_prob: str, bet: str, reason: str,
+                   entry_implied_prob: float = 0.0,
+                   market_ticker: str = "",
+                   contract_expiry: str = "") -> str:
     """Log a prediction. Returns a unique prediction ID."""
     mem = _load()
     now = datetime.utcnow()
     pred_id = now.strftime("%Y%m%d%H%M")
 
     pred = {
-        "id":              pred_id,
-        "ts":              now.strftime("%Y-%m-%d %H:%M"),
-        "symbol":          symbol,
-        "price_at_pred":   round(price, 2),
-        "target":          target,
-        "range_low":       low,
-        "range_high":      high,
-        "target_prob":     target_prob,
-        "predicted_price": predicted_price,
-        "range_prob":      range_prob,
-        "bet":             bet,
-        "reason":          reason,
-        "actual_price":    None,   # filled in next cycle
-        "target_hit":      None,
-        "range_hit":       None,
-        "price_error":     None,
-        "graded":          False,
+        "id":                   pred_id,
+        "ts":                   now.strftime("%Y-%m-%d %H:%M"),
+        "symbol":               symbol,
+        "price_at_pred":        round(price, 2),
+        "target":               target,
+        "range_low":            low,
+        "range_high":           high,
+        "target_prob":          target_prob,
+        "predicted_price":      predicted_price,
+        "range_prob":           range_prob,
+        "bet":                  bet,
+        "reason":               reason,
+        "entry_implied_prob":   round(entry_implied_prob, 4),  # Fix #1: Kalshi yes_price at prediction time
+        "closing_implied_prob": None,                          # Fix #2: filled by check_closing_snapshots()
+        "market_ticker":        market_ticker,
+        "contract_expiry":      contract_expiry,               # Fix #3: real Kalshi close_time
+        "actual_price":         None,   # filled in next cycle
+        "target_hit":           None,
+        "range_hit":            None,
+        "price_error":          None,
+        "graded":               False,
     }
     mem["predictions"].append(pred)
     mem["stats"]["total_predictions"] += 1
@@ -148,9 +194,17 @@ def grade_last_prediction(current_price: float):
     for pred in reversed(mem["predictions"]):
         if pred["graded"]:
             break
-        # Only grade if deadline has passed (we're in a new hour)
-        pred_ts = datetime.strptime(pred["ts"], "%Y-%m-%d %H:%M")
-        deadline = pred_ts + timedelta(hours=1)
+        # Fix #3: use stored contract_expiry as deadline; fall back to +1h for legacy records
+        contract_expiry = pred.get("contract_expiry", "")
+        if contract_expiry:
+            try:
+                deadline = datetime.fromisoformat(
+                    contract_expiry.rstrip("Z") + "+00:00"
+                ).replace(tzinfo=None)
+            except Exception:
+                deadline = datetime.strptime(pred["ts"], "%Y-%m-%d %H:%M") + timedelta(hours=1)
+        else:
+            deadline = datetime.strptime(pred["ts"], "%Y-%m-%d %H:%M") + timedelta(hours=1)
         if datetime.utcnow() < deadline:
             break
 
@@ -204,6 +258,52 @@ def grade_last_prediction(current_price: float):
         _save(mem)
 
     return graded_any
+
+
+# ─────────────────────────────────────────────
+# CLOSING-PROB SNAPSHOT  (Fix #2: capture Kalshi market price near expiry)
+# ─────────────────────────────────────────────
+
+def check_closing_snapshots(markets_by_ticker: dict) -> int:
+    """For each ungraded prediction within 15 min of its contract_expiry (and not yet
+    snapshotted), store the current Kalshi yes_price as closing_implied_prob.
+    Returns number of predictions snapshotted."""
+    from datetime import timezone
+    mem = _load()
+    now = datetime.now(timezone.utc)
+    count = 0
+    for pred in mem["predictions"]:
+        if pred.get("graded"):
+            continue
+        if not pred.get("market_ticker") or not pred.get("contract_expiry"):
+            continue
+        if pred.get("closing_implied_prob") is not None:
+            continue
+        try:
+            exp = datetime.fromisoformat(pred["contract_expiry"].rstrip("Z") + "+00:00")
+        except Exception:
+            continue
+        window_open = exp - timedelta(minutes=15)
+        if window_open <= now <= exp + timedelta(minutes=5):
+            m = markets_by_ticker.get(pred["market_ticker"])
+            if m:
+                pred["closing_implied_prob"] = round(m["yes_price"], 4)
+                count += 1
+    if count:
+        _save(mem)
+    return count
+
+
+def force_closing_snapshot(pred_id: str, closing_prob: float) -> bool:
+    """Directly store a closing_implied_prob on any ungraded prediction by ID.
+    Used for testing or manual backfill."""
+    mem = _load()
+    for pred in mem["predictions"]:
+        if pred["id"] == pred_id and not pred.get("graded"):
+            pred["closing_implied_prob"] = round(closing_prob, 4)
+            _save(mem)
+            return True
+    return False
 
 
 # ─────────────────────────────────────────────

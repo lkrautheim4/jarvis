@@ -1,9 +1,11 @@
+from watch_function import watch
 #!/usr/bin/env python3
 """
 JARVIS TRADER — Unified Trading Bot
 Crypto + Stocks + Futures | Claude AI | Signal Fusion | Shared Brain
 """
 import json, time, requests, os
+from jarvis_context import get_context
 from datetime import datetime
 import jarvis_brain
 from jarvis_signal_fusion import get_fusion_score, get_position_size

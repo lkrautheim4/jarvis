@@ -20,17 +20,55 @@ class JarvisContext:
         conn.commit()
         conn.close()
 
-    def write_decision(self, bot_name, decision_type, symbol=None, signal=None,
-                      confidence=None, action=None, reason=None, data=None):
+
+    def log_to_audit(self, from_bot, decision_type, symbol=None, signal=None, 
+                     action=None, confidence=None, reason=None, approved_by=None, blocked_reason=None):
+        """Log decision to audit trail"""
         conn = sqlite3.connect(DB)
         cur = conn.cursor()
-        cur.execute("""INSERT OR REPLACE INTO bot_decisions
-            (ts, bot_name, decision_type, symbol, signal, confidence, action, reason, data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (datetime.now().isoformat(), bot_name, decision_type, symbol, signal,
-             confidence, action, reason, json.dumps(data) if data else None))
+        cur.execute("""
+            INSERT INTO decision_audit 
+            (ts, from_bot, decision_type, symbol, signal, action, confidence, reason, approved_by, blocked_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now().isoformat(), from_bot, decision_type, symbol, signal,
+            action, confidence, reason, approved_by, blocked_reason
+        ))
         conn.commit()
         conn.close()
+
+
+    def write_decision(self, bot_name, decision_type, symbol=None, signal=None, 
+                      confidence=None, action=None, reason=None, data=None):
+        """Bot writes a decision to shared state (non-blocking)"""
+        import time
+        for attempt in range(3):
+            try:
+                conn = sqlite3.connect(DB, timeout=1)
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT OR REPLACE INTO bot_decisions 
+                    (ts, bot_name, decision_type, symbol, signal, confidence, action, reason, data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    datetime.now().isoformat(),
+                    bot_name,
+                    decision_type,
+                    symbol,
+                    signal,
+                    confidence,
+                    action,
+                    reason,
+                    json.dumps(data) if data else None
+                ))
+                conn.commit()
+                conn.close()
+                return  # Success
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(0.1)  # Brief backoff
+                else:
+                    pass  # Silently drop write on final failure
 
     def read_decision(self, bot_name, decision_type, symbol=None):
         conn = sqlite3.connect(DB)
