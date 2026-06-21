@@ -32,7 +32,7 @@ from jarvis_secrets import CLAUDE_API_KEY as CLAUDE_KEY
 from jarvis_secrets import ALPACA_PAPER_KEY as ALPACA_KEY, ALPACA_PAPER_SECRET as ALPACA_SECRET
 ALPACA_BASE    = "https://paper-api.alpaca.markets"
 TG_TRADER      = __import__("jarvis_secrets").TG_TOKEN_TRADER
-TG_PRED        = "8713474292:AAEtNCL6xuqIbS3Adf5KsFhH5xZ3XQ7Rz0o"
+TG_PRED        = __import__("jarvis_secrets").TG_TOKEN_PRED
 CHAT_ID        = "7534553840"
 MEMORY_FILE    = "/root/jarvis/btc_memory.json"
 BRAIN_FILE         = "/root/jarvis/kalshi_brain.json"
