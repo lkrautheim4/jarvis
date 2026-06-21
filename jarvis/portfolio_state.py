@@ -23,8 +23,8 @@ import requests
 from datetime import datetime
 
 _ALPACA_BASE = "https://paper-api.alpaca.markets"
-_KEY    = "PKTHANGUNVFDSLLR3VXPETXRQF"
-_SECRET = "GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"
+_KEY    = __import__("jarvis_secrets").ALPACA_PAPER_KEY
+_SECRET = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
 
 
 def _hdr():

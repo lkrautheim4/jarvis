@@ -10,8 +10,8 @@ from datetime import datetime
 import jarvis_brain
 from jarvis_signal_fusion import get_fusion_score, get_position_size
 
-ALPACA_KEY    = "PKTHANGUNVFDSLLR3VXPETXRQF"
-ALPACA_SECRET = "GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"
+ALPACA_KEY    = __import__("jarvis_secrets").ALPACA_PAPER_KEY
+ALPACA_SECRET = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
 ALPACA_BASE   = "https://paper-api.alpaca.markets"
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_TRADER
 TELEGRAM_CHAT  = "7534553840"

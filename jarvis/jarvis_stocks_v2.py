@@ -16,8 +16,8 @@ logging.basicConfig(level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
 log = logging.getLogger('JARVIS-STOCKS-V2')
 
-ALPACA_KEY     = "PKTHANGUNVFDSLLR3VXPETXRQF"
-ALPACA_SECRET  = "GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"
+ALPACA_KEY     = __import__("jarvis_secrets").ALPACA_PAPER_KEY
+ALPACA_SECRET  = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
 ALPACA_BASE    = "https://paper-api.alpaca.markets"
 ALPACA_DATA    = "https://data.alpaca.markets"
 TELEGRAM_TOKEN = __import__("jarvis_secrets").TG_TOKEN_INTEL

@@ -100,8 +100,8 @@ def get_all_pnl():
 
     # Alpaca account
     try:
-        hdrs = {"APCA-API-KEY-ID":"PKTHANGUNVFDSLLR3VXPETXRQF",
-                "APCA-API-SECRET-KEY":"GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"}
+        hdrs = {"APCA-API-KEY-ID": __import__("jarvis_secrets").ALPACA_PAPER_KEY,
+                "APCA-API-SECRET-KEY": __import__("jarvis_secrets").ALPACA_PAPER_SECRET}
         acct = requests.get("https://paper-api.alpaca.markets/v2/account",
             headers=hdrs, timeout=8).json()
         equity = float(acct.get("equity", 0))

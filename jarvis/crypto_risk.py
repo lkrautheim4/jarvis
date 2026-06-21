@@ -14,8 +14,8 @@ import requests
 CRYPTO_EXPOSURE_CAP = 3000.0   # max total crypto market value ($) across all bots
 
 _ALPACA_BASE = "https://paper-api.alpaca.markets"
-_KEY    = "PKTHANGUNVFDSLLR3VXPETXRQF"
-_SECRET = "GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"
+_KEY    = __import__("jarvis_secrets").ALPACA_PAPER_KEY
+_SECRET = __import__("jarvis_secrets").ALPACA_PAPER_SECRET
 _CRYPTO_TOKENS = ("BTC", "XBT", "ETH", "SOL", "AVAX", "DOGE", "LTC", "XRP", "USDC", "USDT", "LINK", "UNI", "AAVE")
 
 

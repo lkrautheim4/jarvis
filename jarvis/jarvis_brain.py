@@ -366,8 +366,8 @@ def get_quote_price(ticker: str) -> float:
         r = __import__("requests").get(
             f"https://data.alpaca.markets/v2/stocks/{ticker}/quotes/latest",
             headers={
-                "APCA-API-KEY-ID": "PKTHANGUNVFDSLLR3VXPETXRQF",
-                "APCA-API-SECRET-KEY": "GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"
+                "APCA-API-KEY-ID": __import__("jarvis_secrets").ALPACA_PAPER_KEY,
+                "APCA-API-SECRET-KEY": __import__("jarvis_secrets").ALPACA_PAPER_SECRET
             }, timeout=5
         )
         if r.status_code == 200:

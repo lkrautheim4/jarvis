@@ -164,8 +164,8 @@ def check_open_positions(risk_map):
     alerts = []
     try:
         import requests as req
-        hdrs = {"APCA-API-KEY-ID":"PKTHANGUNVFDSLLR3VXPETXRQF",
-                "APCA-API-SECRET-KEY":"GRTDDfkCGWbZMoNSWms6uJSGvw72rHaAk1N1fvLi8EAP"}
+        hdrs = {"APCA-API-KEY-ID": __import__("jarvis_secrets").ALPACA_PAPER_KEY,
+                "APCA-API-SECRET-KEY": __import__("jarvis_secrets").ALPACA_PAPER_SECRET}
         pos = req.get("https://paper-api.alpaca.markets/v2/positions",
             headers=hdrs, timeout=8).json()
 
