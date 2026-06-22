@@ -53,7 +53,11 @@ log = logging.getLogger('JARVIS-INTEL')
 # ─────────────────────────────────────────
 # TELEGRAM
 # ─────────────────────────────────────────
-import jarvis_insider
+try:
+    import jarvis_insider
+    _insider_available = True
+except ImportError:
+    _insider_available = False
 
 
 def tg(msg, token=TELEGRAM_TOKEN):
@@ -1003,6 +1007,8 @@ def main():
     log.info("JARVIS INTELLIGENCE ENGINE — Level 3 + Level 4")
     log.info("Options Flow | Insider Filings | Dark Pool | Self-Improvement")
     log.info("="*65)
+    if not _insider_available:
+        log.warning("jarvis_insider missing — insider scanning DISABLED")
 
     intel = load_intel()
 
@@ -1040,7 +1046,10 @@ def main():
                 scored = sorted(hot.items(), key=lambda x: x[1].get("score",0), reverse=True)[:5]
                 lines = ["INTELLIGENCE SUMMARY",""]
                 lines.append(f"Options alerts: {len(intel.get('options_alerts',[]))}")
-                lines.append(f"Insider alerts: {len(intel.get('insider_alerts',[]))}")
+                if _insider_available:
+                    lines.append(f"Insider alerts: {len(intel.get('insider_alerts',[]))}")
+                else:
+                    lines.append("INSIDER: OFFLINE (module missing)")
                 lines.append(f"Dark pool signals: {len(intel.get('darkpool_alerts',[]))}")
                 lines.append("")
                 if scored:
@@ -1054,7 +1063,10 @@ def main():
                 scan_options_flow(intel)
 
             elif text == "INSIDER":
-                jarvis_insider.scan_and_alert(tg, WATCH_TICKERS)
+                if _insider_available:
+                    jarvis_insider.scan_and_alert(tg, WATCH_TICKERS)
+                else:
+                    tg("INSIDER: OFFLINE (jarvis_insider module missing)")
 
             elif text == "IMPROVE":
                 run_self_improvement(intel)
@@ -1075,7 +1087,7 @@ def main():
             scan_options_flow(intel)
 
         # INSIDER FILINGS — every 15 minutes
-        if now - last_insider >= INSIDER_POLL:
+        if _insider_available and now - last_insider >= INSIDER_POLL:
             last_insider = now
             jarvis_insider.scan_and_alert(tg, WATCH_TICKERS)
 
