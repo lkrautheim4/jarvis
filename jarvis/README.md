@@ -1,48 +1,55 @@
-# JARVIS — READ THIS FIRST (status as of 2026-06-23)
+# JARVIS — READ THIS FIRST (status as of 2026-06-23 evening)
 
 > If anything here contradicts the live system, THE LIVE SYSTEM WINS. Verify, don't trust.
 > This file is only as true as the moment it was written. Re-check with the commands cited.
 
 ## CURRENT STATE (one-screen orientation)
 
-**Live & proven (hardened tonight):**
+**Live & proven:**
 - Vision trade logging: `jarvis_vision_capture.py` — screenshot -> Claude vision -> verified
-  row in options_trades. Send fills to @screen_shot_options_bot (TG_TOKEN_SCREENSHOT),
-  reply LOG/CLOSE/CONFIRM/DTE <n>. (NOT @screenshottrader — that token is shared with
-  jarvis_master/lenny_trader_bot/jarvis_trader and will starve vision of messages.)
-  Full details + recovery runbook: see SYSTEM_MAP.md.
+  row in options_trades. Send fills to **@screen_shot_options_bot** (TG_TOKEN_SCREENSHOT),
+  reply LOG / CLOSE / CONFIRM / DTE <n>.
+  DO NOT use @screenshottrader — TG_TOKEN_TRADER is shared with jarvis_master,
+  lenny_trader_bot, and jarvis_trader; they race getUpdates and eat your messages.
+  Full details + recovery runbook: SYSTEM_MAP.md.
+- Exit/close flow: send exit screenshot to @screen_shot_options_bot, reply CLOSE.
+  Bot matches by symbol+strike+expiry, shows P/L preview, requires CONFIRM. Multiple
+  opens → numbered list, you pick. Zero matches → clear error. No auto-close on ambiguity.
 - Market watcher: `jarvis_market_watcher.py` — SPY QQQ TSLA NVDA AAPL SPCX. Alerts on
   VWAP cross, EMA9 cross, 3x volume spike, prior-day + premarket level breaks. 2-min poll,
   RTH only, 30-min cooldown, alerts via @Jarvis_Stocks_Bot (TG_TOKEN_INTEL).
 - Both daemons: flock singleton (cannot duplicate), in start_all.sh (survive reboot).
 - Health/alert tooling for vision: vision_health.py (read-only), vision_canary.py (manual
   write-path proof, self-cleaning), vision_alert.py (cron */15, alerts on status change).
+- First real trade logged + closed: TSLA $380 put_sell (CREDIT) expired worthless,
+  WIN +$345. options_trades id=5224, is_real=1, status='closed'.
 
 **Broken / unresolved (do not pretend these work):**
-- options_trades has 46 rows, ALL paper, ALL is_real=0, last real write NONE.
-  Yesterday's real SPCX put was never logged (bot lied "logged:5213", rolled back).
-  => Any analytics/dashboard over this table is meaningless until real trades accumulate.
-- Trade Journal dashboard: NOT built. Blocked on real trade data (see above). Build it
-  only after logging real fills through the vision bot for several sessions.
-- Token-naming debt: secrets var names DO NOT match their bots. Confirmed via getMe:
-  TG_TOKEN_TRADER->screenshottrader, TG_TOKEN_ADVISOR->LennyTraderBot(alias),
-  TG_TOKEN_INTEL->Jarvis_Stocks_Bot, TG_TOKEN_LENNY & TG_TOKEN_PRED->Lenny_predictions_bot,
-  TG_TOKEN_SCREENSHOT->screen_shot_options_bot (a DIFFERENT bot than vision uses).
-  PASTE_YOUR_NEW_TOKEN = unfilled placeholder, do not use. (Details: SYSTEM_MAP.md §10)
-- Market watcher uses Alpaca IEX feed (no paid SIP): VWAP & volume are APPROXIMATE
-  (IEX is ~2-3% of total volume). Good for directional heads-up, NOT broker-exact levels.
-- Market watcher has NO health-check / alert coverage yet (only vision_capture does).
-- README architecture list below may include bots that aren't running (e.g. jarvis_insider.py
-  is listed but was NOT in start_all BOTS[] / not in ps). Verify with: pgrep -af python3
+- options_trades: 46 paper rows (is_real=0) + 1 real closed trade. Dashboard is still
+  meaningless — need more real trades before win-rate or expectancy numbers mean anything.
+- Trade Journal dashboard: NOT built. Build after ~10+ real closed trades accumulate.
+- Token-naming debt: secrets var names do not match actual bots (confirmed via getMe):
+    TG_TOKEN_TRADER    -> @screenshottrader  (polled by master, lenny_trader, jarvis_trader)
+    TG_TOKEN_SCREENSHOT-> @screen_shot_options_bot  (vision_capture ONLY — correct)
+    TG_TOKEN_ADVISOR   -> LennyTraderBot (alias for TRADER's token — same bot)
+    TG_TOKEN_INTEL     -> @Jarvis_Stocks_Bot
+    TG_TOKEN_LENNY/PRED-> Lenny_predictions_bot
+    PASTE_YOUR_NEW_TOKEN = unfilled placeholder, never use.
+  Risk: any future script that polls TG_TOKEN_TRADER will starve vision again.
+- Market watcher uses Alpaca IEX feed (no paid SIP): VWAP & volume are approximate
+  (IEX is ~2-3% of total volume). Good for directional heads-up, not broker-exact levels.
+- Market watcher has NO health-check / alert coverage (only vision_capture does).
+- jarvis_insider.py: --days CLI flag not implemented (always uses hardcoded lookback).
+- btc_regime_grader: deferred, do not build yet.
 
 **Next priorities (in order):**
-1. Use the system: log real fills via screenshottrader; let the watcher run during RTH.
-2. After real trades exist: build Trade Journal dashboard (win rate, P/L, ticker & time-of-day
-   performance, screenshot history) filtered to is_real=1.
-3. Entry+exit matching + automatic P/L (specced, deferred): match an exit screenshot to its
-   open by symbol+strike+expiry+right, confirm-match flow, UPDATE row with exit_premium/
-   exit_ts/realized_pnl, status='closed'. P/L sign from direction (DEBIT vs CREDIT).
-4. Cleanup: rename token vars to match bots; give market_watcher health coverage.
+1. Keep logging real fills through @screen_shot_options_bot every session. Let data accumulate.
+2. After ~10+ real closed trades: build Trade Journal dashboard (win rate, P/L by ticker/
+   time-of-day, screenshot history) filtered to is_real=1 AND status='closed'.
+3. Token cleanup: rename TG_TOKEN_* vars in secrets.json to match actual bot usernames;
+   update all callers. Eliminates the queue-starvation risk permanently.
+4. Market watcher health coverage: vision_health.py equivalent for jarvis_market_watcher.py.
+5. jarvis_insider.py: add --days CLI flag so lookback window is configurable at runtime.
 
 **Key operating principle (unchanged):** "green lights over dead pipes" is the enemy. A
 success message is not proof. Every write is verified by readback; every daemon proven by
@@ -162,6 +169,47 @@ jarvis_premium, jarvis_trader, options_grader, btc_ticker, jarvis_learning.
 - jarvis_intelligence.py: `import jarvis_insider` made optional (try/except); degradation is visible —
   WARNING on startup, "INSIDER: OFFLINE (module missing)" in INTEL output, Telegram reply on INSIDER command
 - Old inline `fetch_insider_filings()` in jarvis_intelligence.py is dead code (never called) — safe to delete
+
+## Key fixes + improvements (2026-06-23 session)
+
+**close_manual_option readback (jarvis_memory_db.py)**
+- Was: committed UPDATE but never verified the row flipped to 'closed' — silent failure possible.
+- Fixed: post-commit SELECT on a fresh connection (mirrors _save's cross-connection pattern).
+  Raises RuntimeError if status != 'closed'. Tested: P/L formula, double-close guard, cleanup.
+
+**Full entry+exit close flow (jarvis_vision_capture.py)**
+- Added CLOSE / CONFIRM / digit-picker flow end-to-end.
+- Send exit screenshot → reply CLOSE → bot queries open trades by symbol+strike+expiry,
+  shows computed P/L, requires CONFIRM before writing. Multiple matches → numbered list.
+  Zero matches → clear error. No auto-close on ambiguity — always explicit confirm.
+- All match logic unit-tested against real DB rows before daemonizing.
+
+**Expiry capture on entry (jarvis_vision_capture.py + jarvis_memory_db.py)**
+- Was: map_to_db dropped the expiry field; log_manual_option always wrote expiry=NULL.
+- Fixed: map_to_db now routes vision-extracted expiry into log_manual_option; entry rows
+  carry expiry for reliable exit matching. Null-expiry fallback preserved (bot warns on DTE).
+
+**Token queue contention fix (jarvis_vision_capture.py)**
+- Root cause: jarvis_master, lenny_trader_bot, and jarvis_trader all race getUpdates on
+  TG_TOKEN_TRADER — screenshots were being consumed silently by one of them.
+- Fixed: vision_capture now polls TG_TOKEN_SCREENSHOT (@screen_shot_options_bot exclusively).
+  No other bot polls that token. Confirmed live: startup message delivered, first real
+  screenshot extracted correctly at confidence 0.85.
+
+**First real trade cycle completed**
+- TSLA $380 put_sell (CREDIT), 1 contract, 1 DTE, premium $3.45. Logged via vision bot.
+  Expired worthless → closed at exit_premium=0 → WIN +$345. id=5224, is_real=1, verified.
+  First real row in options_trades with a confirmed P/L.
+
+**Other (committed in same batch, done earlier sessions)**
+- jarvis_memory.py: grade_bet() neutered (raises on call); get_bet_stats() repointed to
+  canonical jarvis_memory.db (was reading stale jarvis_brain.db fossil); get_btc_pred_stats()
+  added (recomputes accuracy from btc_memory.json per-row, ignores frozen aggregator).
+- jarvis_trader.py: stray `from watch_function import watch` before shebang removed.
+- start_all.sh: bots restored after audit; jarvis_vision_capture + jarvis_market_watcher
+  added to BOTS[].
+- New tooling: jarvis_market_watcher.py, vision_health.py, vision_canary.py, vision_alert.py,
+  logtrade.py, trading_brain/tripwire.py (integrity cron), SYSTEM_MAP.md.
 
 ---
 
