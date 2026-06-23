@@ -7,7 +7,9 @@
 
 **Live & proven (hardened tonight):**
 - Vision trade logging: `jarvis_vision_capture.py` — screenshot -> Claude vision -> verified
-  row in options_trades. Send fills to bot @screenshottrader, reply LOG/CANCEL/DTE <n>.
+  row in options_trades. Send fills to @screen_shot_options_bot (TG_TOKEN_SCREENSHOT),
+  reply LOG/CLOSE/CONFIRM/DTE <n>. (NOT @screenshottrader — that token is shared with
+  jarvis_master/lenny_trader_bot/jarvis_trader and will starve vision of messages.)
   Full details + recovery runbook: see SYSTEM_MAP.md.
 - Market watcher: `jarvis_market_watcher.py` — SPY QQQ TSLA NVDA AAPL SPCX. Alerts on
   VWAP cross, EMA9 cross, 3x volume spike, prior-day + premarket level breaks. 2-min poll,

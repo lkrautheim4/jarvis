@@ -27,8 +27,8 @@ secrets = __import__("jarvis_secrets")
 import jarvis_memory_db as db
 
 # --- config ------------------------------------------------------------------
-TG_TOKEN = secrets.TG_TOKEN_TRADER
-TG_CHAT = "7534553840"  # screen_shot_options_bot chat
+TG_TOKEN = secrets.TG_TOKEN_SCREENSHOT   # exclusive token — no other bot polls this
+TG_CHAT = "7534553840"  # krautdog user id (same for all bots)
 ANTHROPIC_KEY = secrets.CLAUDE_API_KEY
 MODEL = "claude-sonnet-4-6"
 API = "https://api.anthropic.com/v1/messages"

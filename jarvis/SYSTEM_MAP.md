@@ -7,12 +7,14 @@ jarvis_vision_capture.py is a Telegram bot daemon. You send a screenshot of an o
 fill; Claude vision extracts the fields, you confirm, and on LOG it writes a verified row
 to options_trades. A `logged:` confirmation means the row provably exists.
 
-## 2. BOT IDENTITY (naming is misleading — read before debugging)
-- Daemon polls token secrets.TG_TOKEN_TRADER, which resolves to bot @screenshottrader.
-- Send fill screenshots to screenshottrader; reply LOG / CANCEL / DTE <n>.
-- Bot chat: TG_CHAT (krautdog, 7534553840).
-- WARNING: variable name says TRADER but bot is screenshottrader. Confirm any token's
-  bot with getMe; never trust the variable name.
+## 2. BOT IDENTITY
+- Daemon polls token secrets.TG_TOKEN_SCREENSHOT → bot @screen_shot_options_bot.
+- Send fill screenshots to @screen_shot_options_bot; reply LOG / CLOSE / CONFIRM / DTE <n>.
+- Bot chat: TG_CHAT = 7534553840 (krautdog user id — same across all bots).
+- WHY TG_TOKEN_SCREENSHOT not TG_TOKEN_TRADER: jarvis_master, lenny_trader_bot, and
+  jarvis_trader all poll getUpdates on TG_TOKEN_TRADER, starving vision_capture of messages.
+  TG_TOKEN_SCREENSHOT is exclusively polled by vision_capture — no queue contention.
+  Switched 2026-06-23. Confirmed live: getMe ok, startup msg delivered (msg_id 41).
 
 ## 3. DATA TARGET
 - DB: /root/jarvis/jarvis_memory.db (canonical, WAL mode)
