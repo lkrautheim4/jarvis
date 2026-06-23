@@ -8,6 +8,7 @@ import sqlite3, json, os
 from datetime import datetime
 
 DB_PATH = "/root/jarvis/jarvis_brain.db"
+KALSHI_RO = "file:/root/jarvis/jarvis_memory.db?mode=ro"  # canonical Kalshi store, read-only
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -142,6 +143,10 @@ def log_bet(side, dollars, btype="hourly"):
     conn.commit(); conn.close()
 
 def grade_bet(won):
+    # DEPRECATED — DEAD GRADING PATH. Fabricated pnl (= full stake, ignored entry price).
+    # Superseded by kalshi_grader.grade_bets() which grades from real settlement.
+    # Neutered 2026-06-21: must never write to kalshi_bets again.
+    raise RuntimeError("grade_bet(won) is deprecated and disabled — use kalshi_grader.grade_bets()")
     conn = get_db()
     row = conn.execute('SELECT * FROM kalshi_bets WHERE result IS NULL ORDER BY id DESC LIMIT 1').fetchone()
     if row:
@@ -153,13 +158,20 @@ def grade_bet(won):
     return dict(row) if row else None
 
 def get_bet_stats():
-    conn = get_db()
-    total = conn.execute('SELECT COUNT(*) as c FROM kalshi_bets WHERE result IS NOT NULL').fetchone()["c"]
-    wins = conn.execute('SELECT COUNT(*) as c FROM kalshi_bets WHERE result="WIN"').fetchone()["c"]
-    pnl = conn.execute('SELECT SUM(pnl) as s FROM kalshi_bets').fetchone()["s"] or 0
+    # 2026-06-22: was reading fossil kalshi_bets in jarvis_brain.db (+400.58, frozen May 28).
+    # Repointed to canonical jarvis_memory.db, source='auto', read-only. Mirrors kalshi_grader.
+    conn = sqlite3.connect(KALSHI_RO, uri=True, timeout=10)
+    conn.row_factory = sqlite3.Row
+    total = conn.execute("SELECT COUNT(*) as c FROM kalshi_bets WHERE source='auto' AND result IS NOT NULL").fetchone()["c"]
+    wins = conn.execute("SELECT COUNT(*) as c FROM kalshi_bets WHERE source='auto' AND result='WIN'").fetchone()["c"]
+    # pnl is only trustworthy where a real fill price produced a non-null pnl.
+    priced = conn.execute("SELECT COUNT(*) as c FROM kalshi_bets WHERE source='auto' AND pnl IS NOT NULL").fetchone()["c"]
+    pnl = conn.execute("SELECT SUM(pnl) as s FROM kalshi_bets WHERE source='auto' AND pnl IS NOT NULL").fetchone()["s"] or 0
     conn.close()
-    return {"total":total,"wins":wins,"losses":total-wins,"pnl":round(pnl,2),
-            "wr":round(wins/total*100) if total>0 else 0}
+    return {"total":total,"wins":wins,"losses":total-wins,
+            "wr":round(wins/total*100) if total>0 else 0,
+            "pnl_priced":round(pnl,2),"priced_n":priced,
+            "pnl_note":f"P&L from {priced}/{total} bets with real fill price; {total-priced} unpriced"}
 
 # ── PRED CALLS ────────────────────────────────────────────────────────────────
 def log_pred(price, direction, confidence, mins):
@@ -249,6 +261,24 @@ def get_recent_events(limit=20):
     conn.close()
     return [dict(r) for r in rows]
 
+def get_btc_pred_stats():
+    """Live BTC hourly-prediction accuracy, recomputed per-row from btc_memory.json.
+    Ignores the file's stale 'stats' rollup block (frozen aggregator).
+    Counts graded rows with non-null target_hit only."""
+    import json
+    try:
+        d = json.load(open("/root/jarvis/btc_memory.json"))
+    except Exception:
+        return {"total":0,"correct":0,"wr":0,"note":"btc_memory.json unreadable"}
+    P = d.get("predictions", [])
+    graded = [r for r in P if r.get("graded") and r.get("target_hit") is not None]
+    correct = sum(1 for r in graded if r.get("target_hit"))
+    total = len(graded)
+    return {"total":total,"correct":correct,
+            "wr":round(correct/total*100) if total>0 else 0,
+            "note":f"{total} graded of {len(P)} logged"}
+
+
 # ── CONTEXT BUILDER ───────────────────────────────────────────────────────────
 def build_context(symbol="BTC"):
     """Build full context string for Claude prompts"""
@@ -271,13 +301,16 @@ def build_context(symbol="BTC"):
         lines.append(f"RSI trend: {' '.join(map(str,rsi_vals))} ({trend})")
     
     if pred_acc["total"] > 0:
-        lines.append(f"Hourly pred: {pred_acc['wr']}% ({pred_acc['correct']}/{pred_acc['total']})")
+        # 2026-06-22: reconnected to LIVE btc_memory.json per-row grades (was stale predictions table).
+        _bp = get_btc_pred_stats()
+        if _bp["total"] > 0:
+            lines.append(f"BTC hourly pred: {_bp['wr']}% ({_bp['correct']}/{_bp['total']} graded)")
     
     if pred_stats["total"] > 0:
         lines.append(f"15-min pred: {pred_stats['wr']}% ABOVE:{pred_stats['above_wr']}% BELOW:{pred_stats['below_wr']}% Last5:{pred_stats['last5']}")
     
     if bet_stats["total"] > 0:
-        lines.append(f"Kalshi bets: {bet_stats['wr']}% WR P&L:${bet_stats['pnl']:+.0f}")
+        lines.append(f"Kalshi auto: {bet_stats['wr']}% WR ({bet_stats['wins']}/{bet_stats['total']}); P&L ${bet_stats['pnl_priced']:+.2f} from {bet_stats['priced_n']}/{bet_stats['total']} priced bets")
     
     if trade_stats["total"] > 0:
         lines.append(f"Scalp trades: {trade_stats['wr']}% WR P&L:${trade_stats['pnl']:+.0f}")

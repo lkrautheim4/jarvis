@@ -9,20 +9,22 @@ cd /root/jarvis
 # Nohup-managed bots (the 15 core)
 BOTS=(
   "jarvis_master.py"
-#KILLED #KILLED   "jarvis_intelligence.py"
-#KILLED #KILLED   "jarvis_level5.py"
+  "jarvis_intelligence.py"
+  "jarvis_level5.py"
   "jarvis_stocks_v2.py"
-#KILLED #KILLED   "jarvis_options_brain.py"
-#KILLED #KILLED   "jarvis_beast.py"
+  "jarvis_options_brain.py"
+  "jarvis_beast.py"
   "jarvis_premium.py"
   "jarvis_trader.py"
   "jarvis_signal_generator.py"
   "jarvis_watchdog.py"
-#KILLED #KILLED   "lenny_predictions.py"
+  "lenny_predictions.py"
   "lenny_trader_bot.py"
   "options_grader.py"
   "btc_ticker.py"
   "jarvis_learning.py"
+  "jarvis_vision_capture.py"
+  "jarvis_market_watcher.py"
 )
 
 echo "=== JARVIS START_ALL v3 @ $(date) ==="

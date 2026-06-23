@@ -455,3 +455,145 @@ def grade_predictions_from_kalshi():
     conn.commit()
     conn.close()
     return graded
+
+# ── MANUAL OPTIONS COPILOT (2026-06-22, Plan A(a)) ──────────────────────────
+# Writes ONLY canonical columns per SCHEMA.md. Does NOT touch the auto-writer path.
+import sqlite3 as _mc_sq
+from datetime import datetime as _mc_dt
+try:
+    from zoneinfo import ZoneInfo as _mc_ZI
+    _MC_ET = _mc_ZI("America/New_York")
+except Exception:
+    _MC_ET = None
+
+_MC_DB = "/root/jarvis/jarvis_memory.db"
+
+def _mc_now_et():
+    """ISO-8601 timestamp in ET (time-of-day analytics depend on ET per SCHEMA.md)."""
+    n = _mc_dt.now(_MC_ET) if _MC_ET else _mc_dt.now()
+    return n.strftime("%Y-%m-%dT%H:%M:%S")
+
+def log_manual_option(symbol, strategy, direction, strike, dte, premium,
+                      contracts, expiry=None, regime=None, score=None, thesis=None,
+                      screenshot=None):
+    """Log a NEW real manual options trade (status='open'). Returns trade id.
+    direction must be 'DEBIT' or 'CREDIT' (drives P&L sign at grading).
+    expiry should be an ISO date string 'YYYY-MM-DD' for exit matching."""
+    direction = (direction or "").upper()
+    if direction not in ("DEBIT", "CREDIT"):
+        raise ValueError("direction must be DEBIT or CREDIT, got %r" % direction)
+    if not contracts or int(contracts) <= 0:
+        raise ValueError("contracts must be a positive int, got %r" % contracts)
+    ts = _mc_now_et()
+    con = _mc_sq.connect(_MC_DB, timeout=10)
+    try:
+        cur = con.execute(
+            "INSERT INTO options_trades "
+            "(symbol, strategy, direction, strike, dte_at_entry, premium, "
+            " contracts, expiry, regime, score, notes, screenshot, "
+            " entry_ts, ts, status, is_real, source, logged_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'open',1,'manual_copilot',?)",
+            (symbol, strategy, direction, strike, dte, premium,
+             int(contracts), expiry, regime, score, thesis, screenshot,
+             ts, ts, ts))
+        con.commit()
+        return cur.lastrowid
+    finally:
+        con.close()
+
+def close_manual_option(trade_id, exit_premium, exit_ts=None):
+    """Close + grade a manual trade. Direction-aware P&L. Returns result dict."""
+    con = _mc_sq.connect(_MC_DB, timeout=10)
+    con.row_factory = _mc_sq.Row
+    try:
+        r = con.execute(
+            "SELECT id, direction, premium, contracts, status, is_real "
+            "FROM options_trades WHERE id=?", (trade_id,)).fetchone()
+        if r is None:
+            raise ValueError("no trade id=%s" % trade_id)
+        if r["status"] == "closed":
+            raise ValueError("trade %s already closed" % trade_id)
+        if r["is_real"] != 1:
+            raise ValueError("trade %s is not a real manual trade (is_real=%s)"
+                             % (trade_id, r["is_real"]))
+        prem = float(r["premium"]); n = int(r["contracts"])
+        gross = (float(exit_premium) - prem) * n * 100.0
+        pnl = gross if r["direction"] == "DEBIT" else -gross
+        result = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "SCRATCH")
+        ets = exit_ts or _mc_now_et()
+        con.execute(
+            "UPDATE options_trades SET exit_premium=?, exit_ts=?, pnl=?, "
+            "result=?, status='closed', closed_at=? WHERE id=?",
+            (float(exit_premium), ets, round(pnl, 2), result, ets, trade_id))
+        con.commit()
+        # Verify with a fresh connection — mirrors the _save cross-connection pattern
+        vcon = _mc_sq.connect(_MC_DB, timeout=10)
+        vcon.row_factory = _mc_sq.Row
+        try:
+            vrow = vcon.execute(
+                "SELECT status FROM options_trades WHERE id=?", (trade_id,)).fetchone()
+            if not vrow or vrow["status"] != "closed":
+                raise RuntimeError(
+                    "UPDATE committed but status != 'closed' for id=%s (got %s)"
+                    % (trade_id, vrow["status"] if vrow else "missing"))
+        finally:
+            vcon.close()
+        return {"id": trade_id, "result": result, "pnl": round(pnl, 2),
+                "direction": r["direction"], "exit_ts": ets}
+    finally:
+        con.close()
+
+# ── MANUAL OPTIONS ANALYTICS (live queries, no stored rollups) ──────────────
+# All filter is_real=1 AND status='closed' AND pnl IS NOT NULL (real closed trades only).
+_MC_FILTER = "WHERE is_real=1 AND status='closed' AND pnl IS NOT NULL AND source='manual_copilot'"
+
+def _mc_rows(group_sql, label):
+    con = _mc_sq.connect("file:" + _MC_DB + "?mode=ro", uri=True)
+    con.row_factory = _mc_sq.Row
+    try:
+        q = ("SELECT {g} AS bucket, COUNT(*) AS n, "
+             "SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) AS wins, "
+             "ROUND(SUM(pnl),2) AS total_pnl, "
+             "ROUND(AVG(pnl),2) AS expectancy "
+             "FROM options_trades {f} GROUP BY {g} ORDER BY bucket"
+             ).format(g=group_sql, f=_MC_FILTER)
+        out = []
+        for r in con.execute(q):
+            n = r["n"] or 0
+            out.append({label: r["bucket"], "n": n,
+                        "wins": r["wins"], "wr": round(r["wins"]/n*100) if n else 0,
+                        "total_pnl": r["total_pnl"], "expectancy": r["expectancy"]})
+        return out
+    finally:
+        con.close()
+
+def setup_analytics():
+    """Win rate + expectancy by setup (strategy)."""
+    return _mc_rows("strategy", "setup")
+
+def time_of_day_analytics():
+    """Win rate + expectancy by ET entry hour."""
+    return _mc_rows("substr(entry_ts,12,2)", "et_hour")
+
+def regime_analytics():
+    """Win rate + expectancy by market regime."""
+    return _mc_rows("regime", "regime")
+
+def manual_summary():
+    """Overall real-closed manual record."""
+    con = _mc_sq.connect("file:" + _MC_DB + "?mode=ro", uri=True)
+    con.row_factory = _mc_sq.Row
+    try:
+        r = con.execute(
+            "SELECT COUNT(*) n, "
+            "SUM(CASE WHEN result='WIN' THEN 1 ELSE 0 END) wins, "
+            "SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END) losses, "
+            "SUM(CASE WHEN result='SCRATCH' THEN 1 ELSE 0 END) scratch, "
+            "ROUND(SUM(pnl),2) total_pnl, ROUND(AVG(pnl),2) expectancy "
+            "FROM options_trades " + _MC_FILTER).fetchone()
+        n = r["n"] or 0
+        return {"trades": n, "wins": r["wins"], "losses": r["losses"],
+                "scratch": r["scratch"], "wr": round(r["wins"]/n*100) if n else 0,
+                "total_pnl": r["total_pnl"], "expectancy": r["expectancy"]}
+    finally:
+        con.close()
